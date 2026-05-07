@@ -807,7 +807,8 @@ def main():
             with c1:
                 top_n = st.slider("분석할 낙폭일 수", 5, 30, 10, key=f"topn_{key}")
             with c2:
-                entry_days = st.slider("진입 시점 (낙폭 후 N일 뒤)", 0, 5, 1, key=f"entry_{key}")
+                entry_days = st.slider("진입 시점 (낙폭 후 N일 뒤 종가 기준)", 0, 5, 1, key=f"entry_{key}")
+                st.caption("0일 = 낙폭 당일 종가  |  1일 = 다음날 종가 (현실적)")
             with c3:
                 days_input = st.text_input(
                     "수익률 확인 시점 — 숫자를 쉼표로 구분해서 입력 (예: 5, 10, 20, 40, 60)",
@@ -934,47 +935,94 @@ def main():
             st.markdown(
                 f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
                 f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 12px;">'
-                f'🏆 최적 진입 시점 TOP 5 (낙폭 상위 {top_n}일 기준 · 평균 수익률 순)</div>',
+                f'🏆 최적 진입 시점 TOP 5 (평균 수익률 순)</div>',
                 unsafe_allow_html=True,
             )
-            st.caption("진입 시점 0~5일 × 보유 기간 5/10/15/20/30/40/60일 — 42가지 조합 전수 분석")
 
-            entry_range = range(0, 6)
-            hold_range  = [5, 10, 15, 20, 30, 40, 60]
+            ga, gb, gc = st.columns(3)
+            with ga:
+                grid_topn_input = st.text_input(
+                    "분석할 낙폭일 수 (예: 5, 10, 20)",
+                    value="5, 10, 20",
+                    key=f"grid_topn_{key}",
+                )
+            with gb:
+                grid_entry_input = st.text_input(
+                    "진입 시점 조합 (예: 0, 1, 2, 3)",
+                    value="0, 1, 2, 3, 4, 5",
+                    key=f"grid_entry_{key}",
+                )
+            with gc:
+                grid_hold_input = st.text_input(
+                    "보유 기간 조합 (예: 5, 10, 20, 40, 60)",
+                    value="5, 10, 15, 20, 30, 40, 60",
+                    key=f"grid_hold_{key}",
+                )
+
+            def parse_ints(s):
+                try:
+                    return sorted(set(
+                        int(x.strip()) for x in s.split(",")
+                        if x.strip().lstrip("-").isdigit() and int(x.strip()) > 0
+                    ))
+                except Exception:
+                    return []
+
+            def parse_nonneg_ints(s):
+                try:
+                    return sorted(set(
+                        int(x.strip()) for x in s.split(",")
+                        if x.strip().lstrip("-").isdigit() and int(x.strip()) >= 0
+                    ))
+                except Exception:
+                    return []
+
+            grid_topn_list  = parse_ints(grid_topn_input)   or [5, 10, 20]
+            grid_entry_list = parse_nonneg_ints(grid_entry_input) or [0, 1, 2, 3, 4, 5]
+            hold_range      = parse_ints(grid_hold_input)   or [5, 10, 15, 20, 30, 40, 60]
+
+            total_combos = len(grid_topn_list) * len(grid_entry_list) * len(hold_range)
+            st.caption(f"낙폭일 수 {grid_topn_list} × 진입 시점 {grid_entry_list}일 × 보유 기간 {hold_range}일 — {total_combos}가지 조합 전수 분석")
+
+            entry_range = grid_entry_list
 
             grid_rows = []
-            for ed in entry_range:
-                for hd in hold_range:
-                    vals = []
-                    for gr in df_drop.itertuples():
-                        dt_g  = getattr(gr, date_col)
-                        pos_g = df_full[df_full["Date"] == pd.Timestamp(dt_g)].index
-                        if len(pos_g) == 0:
-                            continue
-                        ci = pos_g[0]
-                        ei = ci + ed
-                        ti = ei + hd
-                        if ei >= len(df_full) or ti >= len(df_full):
-                            continue
-                        ep = df_full.loc[ei, "Close"]
-                        tp = df_full.loc[ti, "Close"]
-                        vals.append((tp - ep) / ep * 100)
-                    if vals:
-                        pos_cnt = sum(1 for v in vals if v > 0)
-                        grid_rows.append({
-                            "진입 시점":   f"낙폭 후 {ed}일",
-                            "보유 기간":   f"{hd}일",
-                            "평균 수익률": np.mean(vals),
-                            "최대 수익":   max(vals),
-                            "최소 수익":   min(vals),
-                            "상승 확률":   pos_cnt / len(vals) * 100,
-                            "샘플 수":     len(vals),
-                        })
+            for gn in grid_topn_list:
+                df_grid = df[df["daily_ret"] < 0].nsmallest(gn, "daily_ret").reset_index()
+                gcol = df_grid.columns[0]
+                for ed in entry_range:
+                    for hd in hold_range:
+                        vals = []
+                        for gr in df_grid.itertuples():
+                            dt_g  = getattr(gr, gcol)
+                            pos_g = df_full[df_full["Date"] == pd.Timestamp(dt_g)].index
+                            if len(pos_g) == 0:
+                                continue
+                            ci = pos_g[0]
+                            ei = ci + ed
+                            ti = ei + hd
+                            if ei >= len(df_full) or ti >= len(df_full):
+                                continue
+                            ep = df_full.loc[ei, "Close"]
+                            tp = df_full.loc[ti, "Close"]
+                            vals.append((tp - ep) / ep * 100)
+                        if vals:
+                            pos_cnt = sum(1 for v in vals if v > 0)
+                            grid_rows.append({
+                                "낙폭 상위":   f"{gn}일",
+                                "진입 시점":   f"{ed}일 후 종가",
+                                "보유 기간":   f"{hd}일",
+                                "평균 수익률": np.mean(vals),
+                                "최대 수익":   max(vals),
+                                "최소 수익":   min(vals),
+                                "상승 확률":   pos_cnt / len(vals) * 100,
+                                "샘플 수":     len(vals),
+                            })
 
             if grid_rows:
                 grid_df = pd.DataFrame(grid_rows).sort_values("평균 수익률", ascending=False)
                 top5_df = grid_df.head(5).copy().reset_index(drop=True)
-                top5_df.index = range(1, 6)
+                top5_df.insert(0, "순위", range(1, len(top5_df) + 1))
 
                 for col in ["평균 수익률", "최대 수익", "최소 수익"]:
                     top5_df[col] = top5_df[col].apply(lambda v: f"{v:+.2f}%")
@@ -983,7 +1031,7 @@ def main():
                 st.dataframe(
                     style_sim_tab(top5_df),
                     use_container_width=True,
-                    hide_index=False,
+                    hide_index=True,
                 )
 
         for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi")]:
