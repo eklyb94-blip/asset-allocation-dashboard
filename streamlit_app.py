@@ -106,8 +106,10 @@ def load_daily_ohlc():
         df = yf.download(ticker, start=start, auto_adjust=True, progress=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-        df = df[["Open", "Close"]].dropna()
-        df["daily_ret"] = (df["Close"] - df["Open"]) / df["Open"]
+        df = df[["Close"]].dropna()
+        df["prev_close"] = df["Close"].shift(1)
+        df["daily_ret"]  = df["Close"].pct_change()
+        df = df.dropna()
         result[key] = df
     return result
 
@@ -750,8 +752,8 @@ def main():
                 rows.append({
                     "순위":   rank,
                     "날짜":   dt_str,
-                    "시가":   f"{row.Open:,.2f}",
-                    "종가":   f"{row.Close:,.2f}",
+                    "전일종가": f"{row.prev_close:,.2f}",
+                    "종가":    f"{row.Close:,.2f}",
                     "하락률": f"{row.daily_ret*100:.2f}%",
                     "+1일":   fmt_fwd(fwd_ret(idx, 1))  if idx is not None else "N/A",
                     "+5일":   fmt_fwd(fwd_ret(idx, 5))  if idx is not None else "N/A",
