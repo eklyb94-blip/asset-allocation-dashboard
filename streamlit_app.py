@@ -1091,12 +1091,7 @@ def main():
                     tickfont=dict(size=11, color="#9ca3af"),
                     ticksuffix="%",
                 ),
-                legend=dict(
-                    font=dict(size=10, color="#9ca3af"),
-                    bgcolor="rgba(0,0,0,0)",
-                    orientation="v",
-                    x=1.01, y=1,
-                ),
+                showlegend=False,
                 hovermode="x unified",
             )
             st.plotly_chart(fig2, use_container_width=True)
