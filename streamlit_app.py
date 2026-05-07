@@ -12,8 +12,15 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import date
 import io
+import re
 import warnings
 warnings.filterwarnings("ignore")
+
+try:
+    import requests as _requests
+    _REQUESTS_OK = True
+except ImportError:
+    _REQUESTS_OK = False
 
 # ═══════════════════════════════════════════
 # 페이지 설정
@@ -96,6 +103,65 @@ def load_raw():
         "us30y":  dl("^TYX",      "1985-01-01"),
         "krbond": dl("114820.KS", "2009-01-01"),
     }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_vix_history():
+    try:
+        df = yf.download("^VIX", start="1990-01-01", auto_adjust=True,
+                         progress=False, multi_level_index=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        s = df["Close"].dropna()
+        s.index = pd.to_datetime(s.index).tz_localize(None)
+        return s
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_vix_now():
+    try:
+        df = yf.download("^VIX", period="5d", auto_adjust=True, progress=False,
+                         multi_level_index=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return round(float(df["Close"].dropna().iloc[-1]), 1)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_fear_greed():
+    if not _REQUESTS_OK:
+        return None
+    try:
+        r = _requests.get(
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        d = r.json()
+        return round(float(d["fear_and_greed"]["score"]), 1)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_multpl(url):
+    if not _REQUESTS_OK:
+        return None
+    try:
+        r = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        m = re.search(r'id=["\']current-value["\'][^>]*>\s*([\d.]+)', r.text)
+        if m:
+            return float(m.group(1))
+        m2 = re.search(r'<td[^>]*class=["\'][^"\']*current[^"\']*["\'][^>]*>([\d.]+)', r.text)
+        if m2:
+            return float(m2.group(1))
+        return None
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -451,7 +517,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab1, main_tab2, main_tab3 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략"])
+    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -833,15 +899,29 @@ def main():
 
             # ── 카테고리 체크박스 필터 ──
             st.markdown(
-                '<div style="color:#9ca3af;font-size:12px;margin-bottom:8px;">카테고리 필터</div>',
+                """
+                <div style="
+                    background:#1a2235;
+                    border:1px solid #3b82f6;
+                    border-radius:10px;
+                    padding:14px 18px 6px 18px;
+                    margin-bottom:14px;
+                ">
+                <div style="color:#60a5fa;font-size:13px;font-weight:700;margin-bottom:10px;">
+                    🔽 카테고리 필터 (체크 해제 시 해당 항목 숨김)
+                </div>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
-            cb_cols = st.columns(4)
-            selected_cats = []
-            for i, cat in enumerate(CATEGORIES):
-                with cb_cols[i % 4]:
-                    if st.checkbox(cat, value=True, key=f"cat_{key}_{i}"):
-                        selected_cats.append(cat)
+            with st.container():
+                cb_cols = st.columns(4)
+                selected_cats = []
+                for i, cat in enumerate(CATEGORIES):
+                    with cb_cols[i % 4]:
+                        if st.checkbox(cat, value=True, key=f"cat_{key}_{i}"):
+                            selected_cats.append(cat)
+            st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
 
             if not selected_cats:
                 st.warning("카테고리를 하나 이상 선택해주세요.")
@@ -1166,6 +1246,782 @@ def main():
         for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi")]:
             with tab:
                 render_sim_tab(key)
+
+    # ════════════════════════════════════════
+    # TAB 4: 시장 사이클
+    # ════════════════════════════════════════
+    with main_tab4:
+        st.markdown('<div class="section-title">📈 시장 사이클 분석</div>', unsafe_allow_html=True)
+        st.caption("직전 고점 대비 -20% 이하 → 하락장 시작 / 직전 저점 대비 +20% 이상 → 상승장 시작 (월가 Bull/Bear Market 표준 정의)")
+
+        cyc_s, cyc_n, cyc_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
+
+        def detect_cycles(prices: pd.Series):
+            if len(prices) < 10:
+                return pd.DataFrame()
+
+            cycles = []
+            state = "bull"
+            cycle_start_date  = prices.index[0]
+            cycle_start_price = prices.iloc[0]
+            extreme_date  = prices.index[0]
+            extreme_price = prices.iloc[0]
+
+            for date, price in prices.items():
+                if state == "bull":
+                    if price >= extreme_price:
+                        extreme_date  = date
+                        extreme_price = price
+                    elif price <= extreme_price * 0.80:
+                        dur = (extreme_date - cycle_start_date).days
+                        chg = (extreme_price - cycle_start_price) / cycle_start_price
+                        cycles.append({
+                            "구분": "🟢 상승장",
+                            "시작일": cycle_start_date.strftime("%Y-%m-%d"),
+                            "시작가": round(cycle_start_price, 2),
+                            "종료일": extreme_date.strftime("%Y-%m-%d"),
+                            "종료가": round(extreme_price, 2),
+                            "기간(일)": dur,
+                            "기간(월)": round(dur / 30.4, 1),
+                            "변동률": f"+{chg*100:.1f}%",
+                            "_chg": chg, "_type": "bull",
+                            "_start": cycle_start_date, "_end": extreme_date,
+                        })
+                        state = "bear"
+                        cycle_start_date  = extreme_date
+                        cycle_start_price = extreme_price
+                        extreme_date  = date
+                        extreme_price = price
+                else:
+                    if price <= extreme_price:
+                        extreme_date  = date
+                        extreme_price = price
+                    elif price >= extreme_price * 1.20:
+                        dur = (extreme_date - cycle_start_date).days
+                        chg = (extreme_price - cycle_start_price) / cycle_start_price
+                        cycles.append({
+                            "구분": "🔴 하락장",
+                            "시작일": cycle_start_date.strftime("%Y-%m-%d"),
+                            "시작가": round(cycle_start_price, 2),
+                            "종료일": extreme_date.strftime("%Y-%m-%d"),
+                            "종료가": round(extreme_price, 2),
+                            "기간(일)": dur,
+                            "기간(월)": round(dur / 30.4, 1),
+                            "변동률": f"{chg*100:.1f}%",
+                            "_chg": chg, "_type": "bear",
+                            "_start": cycle_start_date, "_end": extreme_date,
+                        })
+                        state = "bull"
+                        cycle_start_date  = extreme_date
+                        cycle_start_price = extreme_price
+                        extreme_date  = date
+                        extreme_price = price
+
+            # 현재 진행 중인 사이클
+            last_date = prices.index[-1]
+            dur = (extreme_date - cycle_start_date).days
+            chg = (extreme_price - cycle_start_price) / cycle_start_price
+            label = "🟢 상승장 (진행중)" if state == "bull" else "🔴 하락장 (진행중)"
+            sign  = "+" if chg >= 0 else ""
+            cycles.append({
+                "구분": label,
+                "시작일": cycle_start_date.strftime("%Y-%m-%d"),
+                "시작가": round(cycle_start_price, 2),
+                "종료일": extreme_date.strftime("%Y-%m-%d") + " ▶",
+                "종료가": round(extreme_price, 2),
+                "기간(일)": dur,
+                "기간(월)": round(dur / 30.4, 1),
+                "변동률": f"{sign}{chg*100:.1f}%",
+                "_chg": chg, "_type": state,
+                "_start": cycle_start_date, "_end": last_date,
+            })
+            return pd.DataFrame(cycles)
+
+        def render_cycle_tab(key):
+            prices = raw[key]
+            if prices.empty:
+                st.warning("데이터를 불러올 수 없습니다.")
+                return
+
+            cycles_df = detect_cycles(prices)
+            if cycles_df.empty:
+                st.warning("사이클 데이터를 계산할 수 없습니다.")
+                return
+
+            bull_df = cycles_df[cycles_df["_type"] == "bull"]
+            bear_df = cycles_df[cycles_df["_type"] == "bear"]
+
+            avg_bull_days = bull_df["기간(일)"].mean() if len(bull_df) else 0
+            avg_bull_ret  = bull_df["_chg"].mean() * 100 if len(bull_df) else 0
+            avg_bear_days = bear_df["기간(일)"].mean() if len(bear_df) else 0
+            avg_bear_ret  = bear_df["_chg"].mean() * 100 if len(bear_df) else 0
+            cur = cycles_df.iloc[-1]
+            cur_label = "🟢 상승장" if cur["_type"] == "bull" else "🔴 하락장"
+            cur_chg   = f"{'+' if cur['_chg']>=0 else ''}{cur['_chg']*100:.1f}%"
+            cur_days  = cur["기간(일)"]
+
+            # ── 요약 카드 ──
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1:
+                st.metric("현재 상태", cur_label,
+                          delta=f"{cur_chg}  ({cur_days}일 경과)")
+            with m2:
+                st.metric("🟢 상승장 횟수", f"{len(bull_df)}회")
+            with m3:
+                st.metric("🟢 평균 기간 / 상승률",
+                          f"{avg_bull_days:.0f}일",
+                          delta=f"+{avg_bull_ret:.1f}%")
+            with m4:
+                st.metric("🔴 하락장 횟수", f"{len(bear_df)}회")
+            with m5:
+                st.metric("🔴 평균 기간 / 하락률",
+                          f"{avg_bear_days:.0f}일",
+                          delta=f"{avg_bear_ret:.1f}%")
+
+            # ── 신호 강도 계산 ──
+            px2 = prices.copy()
+            px2.index = pd.to_datetime(px2.index).tz_localize(None)
+
+            drawdown  = (px2 - px2.cummax()) / px2.cummax() * 100
+            delta     = px2.diff()
+            gain      = delta.clip(lower=0).rolling(14).mean()
+            loss      = (-delta.clip(upper=0)).rolling(14).mean()
+            rsi_s     = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
+            ma200     = px2.rolling(200).mean()
+            ma_gap    = (px2 - ma200) / ma200 * 100
+            ma20      = px2.rolling(20).mean()
+            std20     = px2.rolling(20).std()
+            bb_up     = ma20 + 2 * std20
+            bb_dn     = ma20 - 2 * std20
+            bb_pct    = (px2 - bb_dn) / (bb_up - bb_dn) * 100
+
+            if key == "kospi":
+                vol   = px2.pct_change().rolling(20).std() * (252**0.5) * 100
+                s_vol = (vol >= 35).astype(int)
+            else:
+                vix_h = load_vix_history()
+                vol   = vix_h.reindex(px2.index, method="ffill") if not vix_h.empty else pd.Series(0, index=px2.index)
+                s_vol = (vol >= 40).astype(int)
+
+            sig_count = (
+                (drawdown <= -30).astype(int) +
+                (rsi_s     <= 30).astype(int) +
+                (ma_gap    <= -15).astype(int) +
+                (bb_pct    <= 0).astype(int) +
+                s_vol
+            ).fillna(0)
+
+            # 하락장 구간 마스크
+            in_bear = pd.Series(False, index=px2.index)
+            for _, row in cycles_df.iterrows():
+                if row["_type"] == "bear":
+                    m = (px2.index >= row["_start"]) & (px2.index <= row["_end"])
+                    in_bear[m] = True
+
+            # DCA 구간: 하락장 + 신호 2개 이상
+            dca_zone = in_bear & (sig_count >= 2)
+            dca_periods = []
+            in_p, st_d = False, None
+            for dt, val in dca_zone.items():
+                if val and not in_p:
+                    st_d, in_p = dt, True
+                elif not val and in_p:
+                    dca_periods.append((st_d, dt))
+                    in_p = False
+            if in_p:
+                dca_periods.append((st_d, px2.index[-1]))
+
+            # ── 가격 + 음영 차트 ──
+            # 하락장별 DCA 첫 진입 시점 계산
+            dca_markers = {2: [], 3: [], 4: []}
+            for _, brow in cycles_df[cycles_df["_type"] == "bear"].iterrows():
+                m = (sig_count.index >= brow["_start"]) & (sig_count.index <= brow["_end"])
+                p_sig = sig_count[m]
+                for thr in [2, 3, 4]:
+                    crossed = p_sig[p_sig >= thr]
+                    if len(crossed) > 0:
+                        dt = crossed.index[0]
+                        dca_markers[thr].append((dt, float(px2[dt])))
+
+            st.markdown(
+                '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 12px;">'
+                '📈 시장 사이클 + 분할매수 진입 시점'
+                '  <span style="color:#34d399;font-size:11px;">■ 상승장</span>'
+                '  <span style="color:#f87171;font-size:11px;">■ 하락장</span>'
+                '  <span style="color:#fbbf24;font-size:11px;">▲ 1차(신호2)</span>'
+                '  <span style="color:#fb923c;font-size:11px;">▲ 2차(신호3)</span>'
+                '  <span style="color:#f87171;font-size:11px;">▲ 3차(신호4)</span></div>',
+                unsafe_allow_html=True,
+            )
+
+            fig = go.Figure()
+
+            # 상승/하락 음영
+            for _, row in cycles_df.iterrows():
+                fc = "rgba(52,211,153,0.13)" if row["_type"] == "bull" else "rgba(248,113,113,0.13)"
+                fig.add_vrect(x0=row["_start"], x1=row["_end"],
+                              fillcolor=fc, layer="below", line_width=0)
+
+            # 가격선
+            fig.add_trace(go.Scatter(
+                x=px2.index, y=px2.values,
+                mode="lines",
+                line=dict(color="#60a5fa", width=1.5),
+                name="종가",
+                hovertemplate="%{x|%Y-%m-%d}  %{y:,.2f}<extra></extra>",
+                showlegend=False,
+            ))
+
+            # 분할매수 진입 마커
+            marker_cfg = [
+                (2, "#fbbf24", "▲ 1차 진입 (신호 2개)"),
+                (3, "#fb923c", "▲ 2차 진입 (신호 3개)"),
+                (4, "#f87171", "▲ 3차 진입 (신호 4개)"),
+            ]
+            for thr, color, label in marker_cfg:
+                pts = dca_markers[thr]
+                if pts:
+                    xs, ys = zip(*pts)
+                    fig.add_trace(go.Scatter(
+                        x=list(xs), y=list(ys),
+                        mode="markers",
+                        marker=dict(symbol="triangle-up", color=color,
+                                    size=14, line=dict(color="#0a0e1a", width=1)),
+                        name=label,
+                        hovertemplate=f"<b>{label}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:,.2f}}<extra></extra>",
+                    ))
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=500,
+                margin=dict(l=0, r=0, t=20, b=0),
+                xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                           tickfont=dict(size=11, color="#9ca3af"),
+                           rangeslider=dict(visible=False),
+                           rangeselector=dict(
+                               buttons=[
+                                   dict(count=5,  label="5Y",  step="year", stepmode="backward"),
+                                   dict(count=10, label="10Y", step="year", stepmode="backward"),
+                                   dict(count=20, label="20Y", step="year", stepmode="backward"),
+                                   dict(step="all", label="전체"),
+                               ],
+                               bgcolor="#1e2a3a", activecolor="#3b82f6",
+                               font=dict(color="#9ca3af", size=11),
+                           )),
+                yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                           tickfont=dict(size=11, color="#9ca3af")),
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0,
+                    font=dict(size=11, color="#d1d5db"),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ── 저점 신호 강도 차트 ──
+            st.markdown(
+                '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:12px 0 4px;">'
+                '📊 저점 신호 동시 점등 개수 (0~5개)</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("낙폭·RSI·MA200·볼린저밴드·변동성 5개 지표 중 동시에 저점 기준을 충족하는 개수 | 🟡 노란선(2개) 이상 + 하락장 = 분할매수 구간")
+
+            fig2 = go.Figure()
+
+            # 색상 구간 배경
+            fig2.add_hrect(y0=0, y1=2, fillcolor="rgba(52,211,153,0.06)", line_width=0)
+            fig2.add_hrect(y0=2, y1=4, fillcolor="rgba(251,191,36,0.06)", line_width=0)
+            fig2.add_hrect(y0=4, y1=5.5, fillcolor="rgba(248,113,113,0.06)", line_width=0)
+
+            # 면적 차트
+            fig2.add_trace(go.Scatter(
+                x=sig_count.index, y=sig_count.values,
+                mode="lines",
+                fill="tozeroy",
+                line=dict(color="#60a5fa", width=1),
+                fillcolor="rgba(96,165,250,0.15)",
+                hovertemplate="%{x|%Y-%m-%d}  신호 %{y}개/5개<extra></extra>",
+            ))
+
+            # 기준선
+            fig2.add_hline(y=2, line_dash="dot", line_color="#fbbf24", line_width=1.5,
+                           annotation_text="1·2차 진입 기준", annotation_position="right",
+                           annotation_font=dict(color="#fbbf24", size=10))
+            fig2.add_hline(y=4, line_dash="dot", line_color="#f87171", line_width=1.5,
+                           annotation_text="3차 진입 기준", annotation_position="right",
+                           annotation_font=dict(color="#f87171", size=10))
+
+            fig2.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=220,
+                margin=dict(l=0, r=80, t=10, b=0),
+                xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                           tickfont=dict(size=10, color="#9ca3af"),
+                           rangeselector=dict(
+                               buttons=[
+                                   dict(count=5,  label="5Y",  step="year", stepmode="backward"),
+                                   dict(count=10, label="10Y", step="year", stepmode="backward"),
+                                   dict(step="all", label="전체"),
+                               ],
+                               bgcolor="#1e2a3a", activecolor="#3b82f6",
+                               font=dict(color="#9ca3af", size=10),
+                           )),
+                yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                           tickfont=dict(size=10, color="#9ca3af"),
+                           range=[0, 5.5], dtick=1),
+                showlegend=False,
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+            # ── 사이클 테이블 (최신순) ──
+            st.markdown(
+                '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 12px;">'
+                '📋 사이클 목록 (최신순)</div>',
+                unsafe_allow_html=True,
+            )
+
+            disp = cycles_df[["구분","시작일","시작가","종료일","종료가","기간(일)","기간(월)","변동률"]].copy()
+            disp = disp.iloc[::-1].reset_index(drop=True)
+            disp.insert(0, "번호", range(1, len(disp) + 1))
+
+            def style_cycle(df):
+                def _c(val):
+                    s = str(val)
+                    if "상승" in s:  return "color:#34d399;font-weight:700"
+                    if "하락" in s:  return "color:#f87171;font-weight:700"
+                    if s.startswith("+"): return "color:#34d399;font-weight:600"
+                    if s.startswith("-"): return "color:#f87171;font-weight:600"
+                    return "color:#d1d5db"
+                return df.style.map(_c)
+
+            st.dataframe(
+                style_cycle(disp),
+                use_container_width=True,
+                height=min(100 + len(disp) * 36, 820),
+                hide_index=True,
+            )
+
+        for tab, key in [(cyc_s, "sp500"), (cyc_n, "nasdaq"), (cyc_k, "kospi")]:
+            with tab:
+                render_cycle_tab(key)
+
+
+    # ════════════════════════════════════════
+    # TAB 5: 저점 레이더
+    # ════════════════════════════════════════
+    with main_tab5:
+        st.markdown('<div class="section-title">📡 저점 레이더 — 역사적 저점 신호 모니터링</div>', unsafe_allow_html=True)
+        st.caption("각 지표가 역사적 저점 구간 기준을 충족하는지 모니터링합니다. ✏️ 표시 항목은 직접 입력하세요.")
+
+        # ── 기술적 지표 계산 ──
+        def calc_tech(key):
+            prices = raw[key]
+            if prices.empty or len(prices) < 200:
+                return {}
+            cur = float(prices.iloc[-1])
+
+            ath = float(prices.max())
+            drawdown = round((cur - ath) / ath * 100, 1)
+
+            delta = prices.diff()
+            gain  = delta.clip(lower=0).rolling(14).mean()
+            loss  = (-delta.clip(upper=0)).rolling(14).mean()
+            rs    = gain.iloc[-1] / loss.iloc[-1] if loss.iloc[-1] != 0 else 100
+            rsi   = round(100 - (100 / (1 + rs)), 1)
+
+            ma200  = float(prices.rolling(200).mean().iloc[-1])
+            ma_gap = round((cur - ma200) / ma200 * 100, 1)
+
+            ma20   = float(prices.rolling(20).mean().iloc[-1])
+            std20  = float(prices.rolling(20).std().iloc[-1])
+            bb_up  = ma20 + 2 * std20
+            bb_dn  = ma20 - 2 * std20
+            bb_pct = round((cur - bb_dn) / (bb_up - bb_dn) * 100, 1) if (bb_up - bb_dn) != 0 else 50.0
+
+            # 실현변동성: 20일 일별 수익률 표준편차 연율화 (VKOSPI 대용)
+            rvol = round(float(prices.pct_change().rolling(20).std().iloc[-1]) * (252 ** 0.5) * 100, 1)
+
+            return {"drawdown": drawdown, "rsi": rsi, "ma_gap": ma_gap, "bb_pct": bb_pct, "rvol": rvol}
+
+        # ── 신호 판정 ──
+        def get_sig(value, threshold, direction="below"):
+            """(아이콘, 색상, 신호여부)"""
+            if value is None:
+                return "⚪", "#4b5563", False
+            margin = abs(threshold) * 0.2
+            if direction == "below":
+                is_sig  = value <= threshold
+                is_warn = (not is_sig) and value <= threshold + margin
+            else:
+                is_sig  = value >= threshold
+                is_warn = (not is_sig) and value >= threshold - margin
+            if is_sig:  return "🔴", "#f87171", True
+            if is_warn: return "🟡", "#fbbf24", False
+            return "🟢", "#34d399", False
+
+        # ── 카드 HTML ──
+        def ind_card(title, value, fmt, threshold, thr_label, direction, desc, is_manual=False):
+            icon, color, _ = get_sig(value, threshold, direction)
+            if value is None:
+                val_str = "—"
+            elif fmt == "pct":
+                val_str = f"{value:+.1f}%"
+            else:
+                val_str = f"{value:.1f}"
+            manual_tag = ' <span style="color:#6b7280;font-size:10px;">✏️</span>' if is_manual else ""
+            return f"""<div style="background:#111827;border:1.5px solid {color}55;
+                border-radius:12px;padding:16px 12px;text-align:center;min-height:140px;">
+  <div style="font-size:20px;margin-bottom:4px;">{icon}</div>
+  <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">{title}{manual_tag}</div>
+  <div style="color:{color};font-size:22px;font-weight:700;line-height:1.1;">{val_str}</div>
+  <div style="color:#4b5563;font-size:10px;margin-top:6px;">기준: {thr_label}</div>
+  <div style="color:#374151;font-size:10px;margin-top:3px;">{desc}</div>
+</div>"""
+
+        # ── 외부 데이터 로드 ──
+        with st.spinner("외부 지표 수집 중..."):
+            vix_val   = load_vix_now()
+            fg_val    = load_fear_greed()
+            cape_val  = load_multpl("https://www.multpl.com/shiller-pe")
+            sp_per    = load_multpl("https://www.multpl.com/s-p-500-pe-ratio")
+
+        # ── 섹션1: 지수별 요약 (클릭 선택) ──
+        tech_keys = ["sp500", "nasdaq", "kospi"]
+        tech_all  = {k: calc_tech(k) for k in tech_keys}
+
+        def index_signals(key, extra_indicators):
+            t = tech_all[key]
+            sigs = []
+            for v, thr, d in [
+                (t.get("drawdown"), -30, "below"),
+                (t.get("rsi"),      30,  "below"),
+                (t.get("ma_gap"),  -15,  "below"),
+                (t.get("bb_pct"),    0,  "below"),
+            ]:
+                _, _, s = get_sig(v, thr, d)
+                sigs.append(s)
+            for v, thr, d in extra_indicators:
+                _, _, s = get_sig(v, thr, d)
+                sigs.append(s)
+            return sigs
+
+        sp500_sigs  = index_signals("sp500",  [(vix_val, 40, "above"), (fg_val, 25, "below"),
+                                                (cape_val, 15, "below"), (sp_per, 15, "below")])
+        nasdaq_sigs = index_signals("nasdaq", [(vix_val, 40, "above"), (fg_val, 25, "below")])
+        kospi_rvol  = tech_all["kospi"].get("rvol")
+        kospi_sigs  = index_signals("kospi",  [(kospi_rvol, 35, "above"), (fg_val, 25, "below")])
+
+        sigs_map = {"sp500": sp500_sigs, "nasdaq": nasdaq_sigs, "kospi": kospi_sigs}
+
+        def summary_card_html(label, sigs, selected=False):
+            n = sum(sigs)
+            total = len(sigs)
+            color  = "#f87171" if n >= 4 else "#fbbf24" if n >= 2 else "#34d399"
+            icon   = "🔴" if n >= 4 else "🟡" if n >= 2 else "🟢"
+            msg    = "저점 신호 다수" if n >= 4 else "주의 구간" if n >= 2 else "정상 구간"
+            border = f"2.5px solid {color}" if selected else f"1.5px solid {color}44"
+            bg     = "#1a2235" if selected else "#111827"
+            return f"""<div style="background:{bg};border:{border};
+                border-radius:12px;padding:18px 16px;text-align:center;">
+  <div style="color:#9ca3af;font-size:12px;margin-bottom:6px;">{label}</div>
+  <div style="font-size:32px;line-height:1;">{icon}</div>
+  <div style="color:{color};font-size:18px;font-weight:700;margin-top:6px;">{n} / {total}개 점등</div>
+  <div style="color:#6b7280;font-size:11px;margin-top:4px;">{msg}</div>
+</div>"""
+
+        # 선택 상태 (session state)
+        if "radar_sel" not in st.session_state:
+            st.session_state["radar_sel"] = "sp500"
+
+        idx_list = [
+            ("sp500",  "🇺🇸 S&P500"),
+            ("nasdaq", "💻 NASDAQ"),
+            ("kospi",  "🇰🇷 KOSPI"),
+        ]
+
+        sc1, sc2, sc3 = st.columns(3)
+        for col, (key, label) in zip([sc1, sc2, sc3], idx_list):
+            with col:
+                selected = st.session_state["radar_sel"] == key
+                st.markdown(summary_card_html(label, sigs_map[key], selected), unsafe_allow_html=True)
+                if st.button("▼ 지표 보기" if not selected else "✅ 선택됨",
+                             key=f"sel_{key}", use_container_width=True):
+                    st.session_state["radar_sel"] = key
+                    st.rerun()
+
+        # ── 섹션2: 선택된 지수의 기술적 지표 ──
+        sel_key   = st.session_state["radar_sel"]
+        sel_label = dict(idx_list)[sel_key]
+        t = tech_all[sel_key]
+
+        st.markdown(
+            f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+            f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 14px;">'
+            f'📊 기술적 지표 — {sel_label}</div>',
+            unsafe_allow_html=True,
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(ind_card(
+                "고점 대비 낙폭", t.get("drawdown"), "pct",
+                -30, "-30% 이하", "below", "역사적 ATH 기준 현재 낙폭"
+            ), unsafe_allow_html=True)
+        with c2:
+            st.markdown(ind_card(
+                "RSI (14일)", t.get("rsi"), "num",
+                30, "30 이하", "below", "과매도 구간 진입 여부"
+            ), unsafe_allow_html=True)
+        with c3:
+            st.markdown(ind_card(
+                "200일 MA 괴리율", t.get("ma_gap"), "pct",
+                -15, "-15% 이하", "below", "장기 추세 대비 이탈 수준"
+            ), unsafe_allow_html=True)
+        with c4:
+            st.markdown(ind_card(
+                "볼린저밴드 %B", t.get("bb_pct"), "pct",
+                0, "0% 이하 (하단 이탈)", "below", "밴드 하단 이탈 시 과매도"
+            ), unsafe_allow_html=True)
+
+        # ── 섹션3: 시장 전반 지표 (지수별 구성 다름) ──
+        st.markdown(
+            '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+            'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 14px;">'
+            '🌐 시장 전반 지표</div>',
+            unsafe_allow_html=True,
+        )
+
+        if sel_key in ("sp500", "nasdaq"):
+            # S&P500 / NASDAQ: VIX, Fear&Greed, CAPE, S&P500 PER
+            g1, g2, g3, g4 = st.columns(4)
+            with g1:
+                st.markdown(ind_card(
+                    "VIX 공포지수", vix_val, "num",
+                    40, "40 이상", "above", "시장 변동성·공포 지수"
+                ), unsafe_allow_html=True)
+            with g2:
+                st.markdown(ind_card(
+                    "Fear & Greed", fg_val, "num",
+                    25, "25 이하 (극단공포)", "below", "CNN 공포탐욕지수 (0~100)"
+                ), unsafe_allow_html=True)
+            with g3:
+                st.markdown(ind_card(
+                    "CAPE (Shiller P/E)", cape_val, "num",
+                    15, "15 이하", "below", "S&P500 물가조정 장기 PER"
+                ), unsafe_allow_html=True)
+            with g4:
+                st.markdown(ind_card(
+                    "S&P500 PER", sp_per, "num",
+                    15, "15 이하", "below", "S&P500 현재 주가수익비율"
+                ), unsafe_allow_html=True)
+
+        else:  # kospi
+            # KOSPI: 실현변동성(VKOSPI 대용), Fear&Greed, KOSPI PBR
+            rvol_val = tech_all["kospi"].get("rvol")
+            g1, g2, g3 = st.columns(3)
+            with g1:
+                st.markdown(ind_card(
+                    "실현변동성 (VKOSPI 대용)", rvol_val, "pct",
+                    35, "35% 이상", "above", "KOSPI 20일 수익률 변동성 연율화"
+                ), unsafe_allow_html=True)
+            with g2:
+                st.markdown(ind_card(
+                    "Fear & Greed", fg_val, "num",
+                    25, "25 이하 (극단공포)", "below", "CNN 공포탐욕지수 (참고용)"
+                ), unsafe_allow_html=True)
+            with g3:
+                ks_pbr = st.number_input(
+                    "KOSPI PBR 직접 입력",
+                    min_value=0.0, max_value=10.0, value=0.0,
+                    step=0.01, key="ks_pbr",
+                )
+                ks_pbr_val = ks_pbr if ks_pbr > 0 else None
+                st.markdown(ind_card(
+                    "KOSPI PBR", ks_pbr_val, "num",
+                    1.0, "1.0 이하", "below", "코스피 주가순자산비율",
+                    is_manual=True
+                ), unsafe_allow_html=True)
+
+        # ── 섹션4: 일별 지표 데이터 테이블 ──
+        st.markdown(
+            f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+            f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 14px;">'
+            f'📅 일별 지표 데이터 — {sel_label}</div>',
+            unsafe_allow_html=True,
+        )
+
+        pc1, pc2 = st.columns([1, 2])
+        with pc1:
+            period = st.select_slider(
+                "표시 기간",
+                options=[30, 60, 90, 120],
+                value=60,
+                key="daily_period",
+            )
+        with pc2:
+            date_col1, date_col2 = st.columns(2)
+            with date_col1:
+                custom_start = st.date_input(
+                    "시작일 (직접 설정)",
+                    value=None,
+                    min_value=date(1985, 1, 1),
+                    max_value=date.today(),
+                    key="daily_start",
+                )
+            with date_col2:
+                custom_end = st.date_input(
+                    "종료일",
+                    value=date.today(),
+                    min_value=date(1985, 1, 1),
+                    max_value=date.today(),
+                    key="daily_end",
+                )
+
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def calc_daily_df(key):
+            prices = raw[key]
+            if prices.empty or len(prices) < 200:
+                return pd.DataFrame()
+
+            prices.index = pd.to_datetime(prices.index).tz_localize(None)
+            df = prices.to_frame(name="_close")
+
+            # 고점 대비 낙폭
+            df["고점대비낙폭(%)"] = (prices - prices.cummax()) / prices.cummax() * 100
+
+            # RSI 14
+            delta = prices.diff()
+            gain  = delta.clip(lower=0).rolling(14).mean()
+            loss  = (-delta.clip(upper=0)).rolling(14).mean()
+            df["RSI"] = (100 - (100 / (1 + gain / loss.replace(0, np.nan)))).round(1)
+
+            # 200일 MA 괴리율
+            ma200 = prices.rolling(200).mean()
+            df["MA200 괴리율(%)"] = ((prices - ma200) / ma200 * 100).round(1)
+
+            # 볼린저밴드 %B
+            ma20  = prices.rolling(20).mean()
+            std20 = prices.rolling(20).std()
+            bb_up = ma20 + 2 * std20
+            bb_dn = ma20 - 2 * std20
+            df["볼린저밴드%B"] = ((prices - bb_dn) / (bb_up - bb_dn) * 100).round(1)
+
+            # VIX or 실현변동성
+            if key == "kospi":
+                df["실현변동성(%)"] = (prices.pct_change().rolling(20).std() * (252**0.5) * 100).round(1)
+            else:
+                vix_h = load_vix_history()
+                if not vix_h.empty:
+                    df["VIX"] = vix_h.reindex(df.index, method="ffill").round(1)
+                else:
+                    df["VIX"] = np.nan
+
+            return df.dropna(subset=["RSI", "MA200 괴리율(%)", "볼린저밴드%B"])
+
+        daily_df = calc_daily_df(sel_key)
+
+        if not daily_df.empty:
+            vol_col = "실현변동성(%)" if sel_key == "kospi" else "VIX"
+            vol_thr = 35 if sel_key == "kospi" else 40
+            n_total_sigs = 5  # 낙폭, RSI, MA200, 볼린저, VIX/실현변동성
+
+            # 날짜 범위 필터
+            if custom_start:
+                start_ts = pd.Timestamp(custom_start)
+                end_ts   = pd.Timestamp(custom_end)
+                disp = daily_df.loc[
+                    (daily_df.index >= start_ts) & (daily_df.index <= end_ts)
+                ].iloc[::-1].copy()
+            else:
+                disp = daily_df.tail(period).iloc[::-1].copy()
+
+            # 신호 카운트 컬럼 (숫자 포함)
+            def count_sigs(row):
+                sigs = [
+                    bool(row["고점대비낙폭(%)"] <= -30),
+                    bool(row["RSI"] <= 30),
+                    bool(row["MA200 괴리율(%)"] <= -15),
+                    bool(row["볼린저밴드%B"] <= 0),
+                    bool(row.get(vol_col, 0) >= vol_thr),
+                ]
+                n = sum(sigs)
+                icon = "🔴" if n >= 4 else "🟡" if n >= 2 else "🟢"
+                return f"{icon} {n}/{n_total_sigs}"
+
+            disp["신호"] = disp.apply(count_sigs, axis=1)
+
+            # 표시용 컬럼 정리
+            disp.index = disp.index.strftime("%Y-%m-%d")
+            disp.index.name = "날짜"
+            disp["종가"] = disp["_close"].apply(lambda x: f"{x:,.2f}")
+            disp = disp[["신호", "종가", "고점대비낙폭(%)", "RSI",
+                          "MA200 괴리율(%)", "볼린저밴드%B", vol_col]]
+            disp["고점대비낙폭(%)"] = disp["고점대비낙폭(%)"].round(1)
+
+            def style_daily(df):
+                def _c(val, col):
+                    if not isinstance(val, (int, float)) or pd.isna(val):
+                        return "color:#6b7280"
+                    if col == "고점대비낙폭(%)":
+                        if val <= -30: return "color:#f87171;font-weight:700"
+                        if val <= -24: return "color:#fbbf24"
+                        return "color:#34d399"
+                    if col == "RSI":
+                        if val <= 30: return "color:#f87171;font-weight:700"
+                        if val <= 36: return "color:#fbbf24"
+                        return "color:#d1d5db"
+                    if col == "MA200 괴리율(%)":
+                        if val <= -15: return "color:#f87171;font-weight:700"
+                        if val <= -12: return "color:#fbbf24"
+                        return "color:#34d399"
+                    if col == "볼린저밴드%B":
+                        if val <= 0:  return "color:#f87171;font-weight:700"
+                        if val <= 20: return "color:#fbbf24"
+                        return "color:#d1d5db"
+                    if col in ("VIX", "실현변동성(%)"):
+                        if val >= vol_thr:         return "color:#f87171;font-weight:700"
+                        if val >= vol_thr * 0.8:   return "color:#fbbf24"
+                        return "color:#d1d5db"
+                    return "color:#d1d5db"
+
+                styles = pd.DataFrame("", index=df.index, columns=df.columns)
+                for col in df.columns:
+                    styles[col] = [_c(v, col) for v in df[col]]
+                return styles
+
+            st.dataframe(
+                disp.style.apply(style_daily, axis=None),
+                use_container_width=True,
+                height=min(100 + len(disp) * 36, 900),
+            )
+        else:
+            st.warning("데이터를 불러올 수 없습니다.")
+
+        # ── 섹션5: 지표 설명 ──
+        with st.expander("📖 지표 설명 및 저점 기준 근거"):
+            st.markdown("""
+| 지표 | 저점 기준 | 근거 |
+|------|-----------|------|
+| **고점 대비 낙폭** | -30% 이하 | 역사적 Bear Market 진입 기준 (월가 표준) |
+| **RSI (14일)** | 30 이하 | 과매도 구간, 기술적 반등 가능성 |
+| **200일 MA 괴리율** | -15% 이하 | 장기 추세 대비 극단적 이탈 구간 |
+| **볼린저밴드 %B** | 0% 이하 | 통계적 하단 이탈 (2σ 밖) |
+| **VIX** | 40 이상 | 시장 극단적 공포 (2008년 80, 코로나 85) |
+| **Fear & Greed** | 25 이하 | CNN 극단적 공포 구간 |
+| **CAPE** | 15 이하 | 역사적 저평가 구간 (장기 평균 17) |
+| **S&P500 PER** | 15 이하 | 역사적 저평가 구간 |
+| **KOSPI PBR** | 1.0 이하 | 순자산 이하 거래 = 극단적 저평가 |
+""")
 
 
 if __name__ == "__main__":
