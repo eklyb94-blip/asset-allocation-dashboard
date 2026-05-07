@@ -721,18 +721,42 @@ def main():
             # Date 컬럼명 통일
             date_col = df_drop.columns[0]
 
+            # 이후 수익률 계산용 전체 df (정수 인덱스)
+            df_full = ohlc[key].copy().reset_index()
+            df_full.columns = ["Date"] + list(df_full.columns[1:])
+
+            def fwd_ret(idx, days):
+                if idx + days < len(df_full):
+                    c0 = df_full.loc[idx, "Close"]
+                    cn = df_full.loc[idx + days, "Close"]
+                    return (cn - c0) / c0
+                return None
+
+            def fmt_fwd(v):
+                if v is None:
+                    return "N/A"
+                return f"{v*100:+.2f}%"
+
             rows = []
             for rank, row in enumerate(df_drop.itertuples(), start=1):
                 dt = getattr(row, date_col)
                 dt_ts  = pd.Timestamp(dt)
                 dt_str = dt_ts.strftime("%Y-%m-%d")
                 reason = get_crash_reason(key, dt_ts)
+
+                pos = df_full[df_full["Date"] == dt_ts].index
+                idx = pos[0] if len(pos) > 0 else None
+
                 rows.append({
                     "순위":   rank,
                     "날짜":   dt_str,
                     "시가":   f"{row.Open:,.2f}",
                     "종가":   f"{row.Close:,.2f}",
                     "하락률": f"{row.daily_ret*100:.2f}%",
+                    "+1일":   fmt_fwd(fwd_ret(idx, 1))  if idx is not None else "N/A",
+                    "+5일":   fmt_fwd(fwd_ret(idx, 5))  if idx is not None else "N/A",
+                    "+10일":  fmt_fwd(fwd_ret(idx, 10)) if idx is not None else "N/A",
+                    "+20일":  fmt_fwd(fwd_ret(idx, 20)) if idx is not None else "N/A",
                     "사유":   reason,
                 })
 
@@ -743,9 +767,12 @@ def main():
                     s = str(val)
                     if s.endswith("%"):
                         try:
-                            v = float(s.replace("%", ""))
+                            v = float(s.replace("%", "").replace("+", ""))
+                            col_name = ""
                             if v < 0:
                                 return "color:#f87171;font-weight:700"
+                            elif v > 0:
+                                return "color:#34d399;font-weight:600"
                         except:
                             pass
                     if s.isdigit():
