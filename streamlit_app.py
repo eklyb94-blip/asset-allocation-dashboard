@@ -154,6 +154,8 @@ def compute_strategy():
             if len(rets) < 4:
                 continue
             rows.append({"year": y, "ret": (1 + rets).prod() - 1})
+        if not rows:
+            return pd.DataFrame(columns=["ret"])
         return pd.DataFrame(rows).set_index("year")
 
     def seasonal(key):
