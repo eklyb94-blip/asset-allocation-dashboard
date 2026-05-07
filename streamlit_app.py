@@ -850,8 +850,7 @@ def main():
             filtered_df = result_df[result_df["_category"].isin(selected_cats)].drop(
                 columns=["_category"]
             ).reset_index(drop=True)
-            filtered_df.insert(0, "순위", range(1, len(filtered_df) + 1))
-            filtered_df = filtered_df.loc[:, ~filtered_df.columns.duplicated()]
+            filtered_df["순위"] = range(1, len(filtered_df) + 1)
 
             st.caption(f"총 {len(filtered_df)}건 표시 중")
 
