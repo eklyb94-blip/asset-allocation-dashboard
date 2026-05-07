@@ -805,7 +805,7 @@ def main():
         def render_sim_tab(key):
             c1, c2, c3 = st.columns([1, 1, 2])
             with c1:
-                top_n = st.slider("분석할 낙폭일 수", 5, 30, 10, key=f"topn_{key}")
+                top_n = st.slider("분석할 낙폭일 수 (개)", 5, 30, 10, key=f"topn_{key}")
             with c2:
                 entry_days = st.slider("진입 시점 (낙폭 후 N일 뒤 종가 기준)", 0, 5, 1, key=f"entry_{key}")
                 st.caption("0일 = 낙폭 당일 종가  |  1일 = 다음날 종가 (현실적)")
@@ -897,7 +897,7 @@ def main():
             st.markdown(
                 f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
                 f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">📊 요약 통계 '
-                f'(낙폭 상위 {top_n}일 · {entry_days}일 뒤 진입 기준)</div>',
+                f'(낙폭 상위 {top_n}개 · {entry_days}일 뒤 진입 기준)</div>',
                 unsafe_allow_html=True,
             )
 
@@ -942,7 +942,7 @@ def main():
             ga, gb, gc = st.columns(3)
             with ga:
                 grid_topn_input = st.text_input(
-                    "분석할 낙폭일 수 (예: 5, 10, 20)",
+                    "분석할 낙폭 상위 N개 (예: 5, 10, 20)",
                     value="5, 10, 20",
                     key=f"grid_topn_{key}",
                 )
@@ -982,7 +982,7 @@ def main():
             hold_range      = parse_ints(grid_hold_input)   or [5, 10, 15, 20, 30, 40, 60]
 
             total_combos = len(grid_topn_list) * len(grid_entry_list) * len(hold_range)
-            st.caption(f"낙폭일 수 {grid_topn_list} × 진입 시점 {grid_entry_list}일 × 보유 기간 {hold_range}일 — {total_combos}가지 조합 전수 분석")
+            st.caption(f"낙폭 상위 {grid_topn_list}개 × 진입 시점 {grid_entry_list}일 × 보유 기간 {hold_range}일 — {total_combos}가지 조합 전수 분석")
 
             entry_range = grid_entry_list
 
@@ -1009,7 +1009,7 @@ def main():
                         if vals:
                             pos_cnt = sum(1 for v in vals if v > 0)
                             grid_rows.append({
-                                "낙폭 상위":   f"{gn}일",
+                                "낙폭 상위":   f"{gn}개",
                                 "진입 시점":   f"{ed}일 후 종가",
                                 "보유 기간":   f"{hd}일",
                                 "평균 수익률": np.mean(vals),
