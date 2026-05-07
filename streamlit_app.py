@@ -1013,6 +1013,9 @@ def main():
                 paths.append((x_vals, y_vals, label, rank))
                 path_matrix.append(y_vals)
 
+            # 200일 시점 최종 수익률 기준으로 내림차순 정렬
+            paths.sort(key=lambda t: t[1][-1], reverse=True)
+
             fig2 = go.Figure()
 
             # 개별 이벤트 선
