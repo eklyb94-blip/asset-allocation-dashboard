@@ -80,9 +80,12 @@ DURATION_US = 18.0   # 미국 30년채 Modified Duration 근사
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_raw():
     def dl(ticker, start):
-        df = yf.download(ticker, start=start, auto_adjust=True, progress=False)
+        df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
+                         multi_level_index=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+        if "Close" not in df.columns:
+            return pd.Series(dtype=float)
         return df["Close"].dropna()
 
     return {
@@ -104,9 +107,13 @@ def load_daily_ohlc():
     }
     result = {}
     for key, (ticker, start) in tickers.items():
-        df = yf.download(ticker, start=start, auto_adjust=True, progress=False)
+        df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
+                         multi_level_index=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+        if "Close" not in df.columns:
+            result[key] = pd.DataFrame(columns=["Close", "prev_close", "daily_ret"])
+            continue
         df = df[["Close"]].dropna()
         df["prev_close"] = df["Close"].shift(1)
         df["daily_ret"]  = df["Close"].pct_change()
@@ -240,6 +247,10 @@ def compute_strategy():
                     "주식단독": round(v_stk, 2),
                 })
 
+        _cols = ["연도","시즌","끝자리","투자","주식수익","금수익","채권수익",
+                 "포트수익","전략6","BH_min","BH_max","주식단독"]
+        if not records:
+            return pd.DataFrame(columns=_cols)
         return pd.DataFrame(records)
 
     sims = {k: simulate(k) for k in ["sp500", "nasdaq", "kospi"]}
@@ -525,6 +536,16 @@ def main():
         st.markdown('<div class="section-title">📊 누적 성과 차트</div>', unsafe_allow_html=True)
 
         def make_perf_chart(sim_df, title, accent):
+            if sim_df.empty or "전략6" not in sim_df.columns:
+                fig = go.Figure()
+                fig.update_layout(
+                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                    height=380, margin=dict(l=0, r=0, t=60, b=0),
+                    annotations=[dict(text="데이터를 불러오는 중입니다. 잠시 후 새로고침 해주세요.",
+                                      x=0.5, y=0.5, showarrow=False,
+                                      font=dict(color="#9ca3af", size=14))],
+                )
+                return fig
             x = [f"{r['연도']}-{r['시즌'][:3]}" for _, r in sim_df.iterrows()]
             cfg = [
                 ("전략6",   "전략6 포트폴리오",    accent, 3),
