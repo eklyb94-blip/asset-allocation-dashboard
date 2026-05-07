@@ -411,7 +411,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab1, main_tab2 = st.tabs(["📊 자산배분", "📉 일일 최대낙폭"])
+    main_tab1, main_tab2, main_tab3 = st.tabs(["📊 자산배분", "📉 일일 최대낙폭", "🔬 낙폭 후 투자 시뮬레이터"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -792,6 +792,147 @@ def main():
         for tab, key in [(drop_s, "sp500"), (drop_n, "nasdaq"), (drop_k, "kospi")]:
             with tab:
                 render_drop_tab(key)
+
+    # ════════════════════════════════════════
+    # TAB 3: 낙폭 후 투자 시뮬레이터
+    # ════════════════════════════════════════
+    with main_tab3:
+        st.markdown('<div class="section-title">🔬 낙폭 후 투자 시뮬레이터</div>', unsafe_allow_html=True)
+        st.caption("폭락일 이후 N일 뒤 진입 시 수익률을 분석합니다. 모든 날짜는 거래일(영업일) 기준입니다.")
+
+        sim_s, sim_n, sim_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
+
+        def render_sim_tab(key):
+            c1, c2, c3 = st.columns([1, 1, 2])
+            with c1:
+                top_n = st.slider("분석할 낙폭일 수", 5, 30, 10, key=f"topn_{key}")
+            with c2:
+                entry_days = st.slider("진입 시점 (낙폭 후 N일 뒤)", 0, 5, 1, key=f"entry_{key}")
+            with c3:
+                days_input = st.text_input(
+                    "수익률 확인 시점 — 숫자를 쉼표로 구분해서 입력 (예: 5, 10, 20, 40, 60)",
+                    value="5, 10, 20, 40, 60",
+                    key=f"days_{key}",
+                )
+
+            # 입력값 파싱
+            try:
+                fwd_days = sorted(set(
+                    int(d.strip()) for d in days_input.split(",")
+                    if d.strip().lstrip("-").isdigit() and int(d.strip()) > 0
+                ))
+            except Exception:
+                fwd_days = []
+            if not fwd_days:
+                st.warning("수익률 확인 시점을 올바르게 입력해주세요. 예) 5, 10, 20, 40, 60")
+                return
+
+            df = ohlc[key].copy()
+            df_drop = df[df["daily_ret"] < 0].nsmallest(top_n, "daily_ret").reset_index()
+            date_col = df_drop.columns[0]
+
+            df_full = ohlc[key].copy().reset_index()
+            df_full.columns = ["Date"] + list(df_full.columns[1:])
+
+            rows = []
+            for rank, row in enumerate(df_drop.itertuples(), start=1):
+                dt        = getattr(row, date_col)
+                dt_ts     = pd.Timestamp(dt)
+                dt_str    = dt_ts.strftime("%Y-%m-%d")
+                reason    = get_crash_reason(key, dt_ts)
+
+                pos = df_full[df_full["Date"] == dt_ts].index
+                if len(pos) == 0:
+                    continue
+                crash_idx = pos[0]
+                entry_idx = crash_idx + entry_days
+                if entry_idx >= len(df_full):
+                    continue
+
+                entry_price = df_full.loc[entry_idx, "Close"]
+                entry_date  = df_full.loc[entry_idx, "Date"].strftime("%Y-%m-%d")
+
+                row_data = {
+                    "순위":   rank,
+                    "낙폭일": dt_str,
+                    "하락률": f"{row.daily_ret*100:.2f}%",
+                    "진입일": entry_date,
+                    "진입가": f"{entry_price:,.2f}",
+                }
+
+                for d in fwd_days:
+                    target_idx = entry_idx + d
+                    if target_idx < len(df_full):
+                        tp  = df_full.loc[target_idx, "Close"]
+                        ret = (tp - entry_price) / entry_price
+                        row_data[f"+{d}일"] = f"{ret*100:+.2f}%"
+                    else:
+                        row_data[f"+{d}일"] = "N/A"
+
+                row_data["사유"] = reason
+                rows.append(row_data)
+
+            if not rows:
+                st.warning("데이터가 부족합니다.")
+                return
+
+            result_df = pd.DataFrame(rows)
+
+            def style_sim_tab(df):
+                def _c(val):
+                    s = str(val)
+                    if s.endswith("%"):
+                        try:
+                            v = float(s.replace("%", "").replace("+", ""))
+                            if v < 0: return "color:#f87171;font-weight:700"
+                            if v > 0: return "color:#34d399;font-weight:600"
+                        except: pass
+                    return "color:#d1d5db"
+                return df.style.map(_c)
+
+            st.dataframe(style_sim_tab(result_df), use_container_width=True, height=420, hide_index=True)
+
+            # ── 요약 통계 ──
+            st.markdown(
+                f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">📊 요약 통계 '
+                f'(낙폭 상위 {top_n}일 · {entry_days}일 뒤 진입 기준)</div>',
+                unsafe_allow_html=True,
+            )
+
+            summary_rows = []
+            for d in fwd_days:
+                col_name = f"+{d}일"
+                if col_name not in result_df.columns:
+                    continue
+                vals = []
+                for v in result_df[col_name]:
+                    if v != "N/A":
+                        try:
+                            vals.append(float(v.replace("%", "").replace("+", "")))
+                        except Exception:
+                            pass
+                if vals:
+                    pos_cnt = sum(1 for v in vals if v > 0)
+                    summary_rows.append({
+                        "기간":       col_name,
+                        "평균 수익률": f"{np.mean(vals):+.2f}%",
+                        "최대":       f"{max(vals):+.2f}%",
+                        "최소":       f"{min(vals):+.2f}%",
+                        "상승 횟수":  f"{pos_cnt}/{len(vals)}",
+                        "상승 확률":  f"{pos_cnt/len(vals)*100:.0f}%",
+                    })
+
+            if summary_rows:
+                st.dataframe(
+                    style_sim_tab(pd.DataFrame(summary_rows)),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi")]:
+            with tab:
+                render_sim_tab(key)
 
 
 if __name__ == "__main__":
