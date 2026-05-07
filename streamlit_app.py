@@ -766,6 +766,22 @@ def main():
 
         drop_s, drop_n, drop_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
 
+        CATEGORIES = [
+            "⚔️ 지정학/전쟁",
+            "🏦 금융위기",
+            "🦠 팬데믹",
+            "📉 버블붕괴",
+            "💱 외환위기",
+            "📊 정책/긴축",
+            "⚡ 기술충격",
+            "🌏 글로벌경기",
+        ]
+
+        def get_category(reason):
+            if " | " in reason:
+                return reason.split(" | ")[0].strip()
+            return "🌏 글로벌경기"
+
         def render_drop_tab(key):
             df = ohlc[key].copy()
             df_drop = df[df["daily_ret"] < 0].nsmallest(30, "daily_ret").reset_index()
@@ -800,19 +816,44 @@ def main():
                 idx = pos[0] if len(pos) > 0 else None
 
                 rows.append({
-                    "순위":   rank,
-                    "날짜":   dt_str,
+                    "순위":     rank,
+                    "날짜":     dt_str,
                     "전일종가": f"{row.prev_close:,.2f}",
-                    "종가":    f"{row.Close:,.2f}",
-                    "하락률": f"{row.daily_ret*100:.2f}%",
-                    "+1일":   fmt_fwd(fwd_ret(idx, 1))  if idx is not None else "N/A",
-                    "+5일":   fmt_fwd(fwd_ret(idx, 5))  if idx is not None else "N/A",
-                    "+10일":  fmt_fwd(fwd_ret(idx, 10)) if idx is not None else "N/A",
-                    "+20일":  fmt_fwd(fwd_ret(idx, 20)) if idx is not None else "N/A",
-                    "사유":   reason,
+                    "종가":     f"{row.Close:,.2f}",
+                    "하락률":   f"{row.daily_ret*100:.2f}%",
+                    "+1일":     fmt_fwd(fwd_ret(idx, 1))  if idx is not None else "N/A",
+                    "+5일":     fmt_fwd(fwd_ret(idx, 5))  if idx is not None else "N/A",
+                    "+10일":    fmt_fwd(fwd_ret(idx, 10)) if idx is not None else "N/A",
+                    "+20일":    fmt_fwd(fwd_ret(idx, 20)) if idx is not None else "N/A",
+                    "사유":     reason,
+                    "_category": get_category(reason),
                 })
 
             result_df = pd.DataFrame(rows)
+
+            # ── 카테고리 체크박스 필터 ──
+            st.markdown(
+                '<div style="color:#9ca3af;font-size:12px;margin-bottom:8px;">카테고리 필터</div>',
+                unsafe_allow_html=True,
+            )
+            cb_cols = st.columns(4)
+            selected_cats = []
+            for i, cat in enumerate(CATEGORIES):
+                with cb_cols[i % 4]:
+                    if st.checkbox(cat, value=True, key=f"cat_{key}_{i}"):
+                        selected_cats.append(cat)
+
+            if not selected_cats:
+                st.warning("카테고리를 하나 이상 선택해주세요.")
+                return
+
+            filtered_df = result_df[result_df["_category"].isin(selected_cats)].drop(
+                columns=["_category"]
+            ).reset_index(drop=True)
+            filtered_df.insert(0, "순위", range(1, len(filtered_df) + 1))
+            filtered_df = filtered_df.loc[:, ~filtered_df.columns.duplicated()]
+
+            st.caption(f"총 {len(filtered_df)}건 표시 중")
 
             def style_drop(df):
                 def _c(val):
@@ -820,7 +861,6 @@ def main():
                     if s.endswith("%"):
                         try:
                             v = float(s.replace("%", "").replace("+", ""))
-                            col_name = ""
                             if v < 0:
                                 return "color:#f87171;font-weight:700"
                             elif v > 0:
@@ -833,9 +873,9 @@ def main():
                 return df.style.map(_c)
 
             st.dataframe(
-                style_drop(result_df),
+                style_drop(filtered_df),
                 use_container_width=True,
-                height=980,
+                height=min(100 + len(filtered_df) * 36, 980),
                 hide_index=True,
             )
 
