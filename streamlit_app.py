@@ -425,7 +425,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab1, main_tab2, main_tab3 = st.tabs(["📊 자산배분", "📉 일일 최대낙폭", "🔬 낙폭 후 투자 시뮬레이터"])
+    main_tab1, main_tab2, main_tab3 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -735,8 +735,8 @@ def main():
     # TAB 2: 일일 최대낙폭
     # ════════════════════════════════════════
     with main_tab2:
-        st.markdown('<div class="section-title">📉 일일 최대낙폭 TOP 30</div>', unsafe_allow_html=True)
-        st.caption("시가(Open) 대비 종가(Close) 기준 일중 하락률 상위 30일 · 음봉(시가>종가)만 집계")
+        st.markdown('<div class="section-title">📉 역대 폭락일 TOP 30</div>', unsafe_allow_html=True)
+        st.caption("전일 종가 대비 당일 종가 기준 하락률 상위 30일")
 
         drop_s, drop_n, drop_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
 
@@ -821,7 +821,7 @@ def main():
     # TAB 3: 낙폭 후 투자 시뮬레이터
     # ════════════════════════════════════════
     with main_tab3:
-        st.markdown('<div class="section-title">🔬 낙폭 후 투자 시뮬레이터</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🔍 폭락 후 전략</div>', unsafe_allow_html=True)
         st.caption("폭락일 이후 N일 뒤 진입 시 수익률을 분석합니다. 모든 날짜는 거래일(영업일) 기준입니다.")
 
         sim_s, sim_n, sim_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
