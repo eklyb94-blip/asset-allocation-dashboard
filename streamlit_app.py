@@ -974,112 +974,123 @@ def main():
                     hide_index=True,
                 )
 
-            # ── 최적 진입 시점 분석 ──
+            # ── 낙폭 후 200일 경로 차트 ──
             st.markdown(
                 f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
                 f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 12px;">'
-                f'🏆 최적 진입 시점 TOP 5 (평균 수익률 순)</div>',
+                f'📈 낙폭 후 200일 가격 경로 (낙폭일 = 0%)</div>',
                 unsafe_allow_html=True,
             )
+            st.caption("각 낙폭일 종가를 0% 기준으로 정규화 · 굵은 노란선 = 전체 평균")
 
-            ga, gb = st.columns(2)
-            with ga:
-                grid_topn_input = st.text_input(
-                    "분석할 낙폭 상위 N개 (예: 5, 10, 20)",
-                    value="5, 10, 20",
-                    key=f"grid_topn_{key}",
-                )
-            with gb:
-                grid_hold_input = st.text_input(
-                    "보유 기간 조합 (예: 5, 10, 20, 40, 60)",
-                    value="5, 10, 15, 20, 30, 40, 60",
-                    key=f"grid_hold_{key}",
-                )
+            # 색상 팔레트 (이벤트별)
+            palette = [
+                "#60a5fa","#34d399","#f87171","#a78bfa","#fbbf24",
+                "#38bdf8","#4ade80","#fb923c","#e879f9","#94a3b8",
+                "#f472b6","#2dd4bf","#facc15","#818cf8","#86efac",
+                "#7dd3fc","#fca5a5","#c4b5fd","#6ee7b7","#fed7aa",
+            ]
 
-            grid_topn_list  = parse_ints_pos(grid_topn_input) or [5, 10, 20]
-            grid_entry_list = entry_list   # 상단 진입 시점 입력값 공유
-            hold_range      = parse_ints_pos(grid_hold_input) or [5, 10, 15, 20, 30, 40, 60]
+            paths      = []   # (x_list, y_list, label)
+            path_matrix = []  # for average
 
-            total_combos = len(grid_topn_list) * len(grid_entry_list) * len(hold_range)
-            st.caption(f"낙폭 상위 {grid_topn_list}개 × 진입 시점 {grid_entry_list}일 × 보유 기간 {hold_range}일 — {total_combos}가지 조합 전수 분석")
+            for rank, cr in enumerate(df_drop.itertuples(), start=1):
+                dt_cr  = getattr(cr, date_col)
+                dt_ts  = pd.Timestamp(dt_cr)
+                pos_cr = df_full[df_full["Date"] == dt_ts].index
+                if len(pos_cr) == 0:
+                    continue
+                ci       = pos_cr[0]
+                end_i    = min(ci + 201, len(df_full))
+                segment  = df_full.loc[ci:end_i - 1, "Close"].values
+                if len(segment) < 2:
+                    continue
+                base   = segment[0]
+                y_vals = [(p - base) / base * 100 for p in segment]
+                x_vals = list(range(len(y_vals)))
+                reason = get_crash_reason(key, dt_ts)
+                label  = f"#{rank} {dt_ts.strftime('%Y-%m-%d')}  {reason}"
+                paths.append((x_vals, y_vals, label, rank))
+                path_matrix.append(y_vals)
 
-            entry_range = grid_entry_list
+            fig2 = go.Figure()
 
-            grid_rows = []
-            for gn in grid_topn_list:
-                df_grid = df[df["daily_ret"] < 0].nsmallest(gn, "daily_ret").reset_index()
-                gcol = df_grid.columns[0]
-                for ed in entry_range:
-                    for hd in hold_range:
-                        vals = []
-                        for gr in df_grid.itertuples():
-                            dt_g  = getattr(gr, gcol)
-                            pos_g = df_full[df_full["Date"] == pd.Timestamp(dt_g)].index
-                            if len(pos_g) == 0:
-                                continue
-                            ci = pos_g[0]
-                            ei = ci + ed
-                            ti = ei + hd
-                            if ei >= len(df_full) or ti >= len(df_full):
-                                continue
-                            ep = df_full.loc[ei, "Close"]
-                            tp = df_full.loc[ti, "Close"]
-                            vals.append((tp - ep) / ep * 100)
-                        if vals:
-                            pos_cnt = sum(1 for v in vals if v > 0)
-                            grid_rows.append({
-                                "낙폭 상위":   f"{gn}개",
-                                "진입 시점":   f"{ed}일 후 종가",
-                                "보유 기간":   f"{hd}일",
-                                "평균 수익률": np.mean(vals),
-                                "최대 수익":   max(vals),
-                                "최소 수익":   min(vals),
-                                "상승 확률":   pos_cnt / len(vals) * 100,
-                                "샘플 수":     len(vals),
-                            })
+            # 개별 이벤트 선
+            for x_vals, y_vals, label, rank in paths:
+                clr_line = palette[(rank - 1) % len(palette)]
+                fig2.add_trace(go.Scatter(
+                    x=x_vals, y=y_vals,
+                    name=label,
+                    mode="lines",
+                    line=dict(color=clr_line, width=1.2),
+                    opacity=0.55,
+                    hovertemplate=f"<b>{label}</b><br>경과일: %{{x}}<br>수익률: %{{y:.2f}}%<extra></extra>",
+                ))
 
-            top5_raw = pd.DataFrame()
-            if grid_rows:
-                grid_df  = pd.DataFrame(grid_rows).sort_values("평균 수익률", ascending=False)
-                top5_raw = grid_df.head(5).copy().reset_index(drop=True)
-                top5_raw.insert(0, "순위", range(1, len(top5_raw) + 1))
+            # 평균선
+            if path_matrix:
+                max_len = max(len(v) for v in path_matrix)
+                avg_y   = [
+                    np.mean([v[i] for v in path_matrix if i < len(v)])
+                    for i in range(max_len)
+                ]
+                fig2.add_trace(go.Scatter(
+                    x=list(range(len(avg_y))), y=avg_y,
+                    name="━ 평균",
+                    mode="lines",
+                    line=dict(color="#fbbf24", width=3),
+                    hovertemplate="<b>평균</b><br>경과일: %{x}<br>수익률: %{y:.2f}%<extra></extra>",
+                ))
 
-                top5_df = top5_raw.copy()
-                for col in ["평균 수익률", "최대 수익", "최소 수익"]:
-                    top5_df[col] = top5_df[col].apply(lambda v: f"{v:+.2f}%")
-                top5_df["상승 확률"] = top5_df["상승 확률"].apply(lambda v: f"{v:.0f}%")
+            # 0% 기준선
+            fig2.add_hline(y=0, line_dash="dash", line_color="#4b5563", line_width=1)
 
-                st.dataframe(
-                    style_sim_tab(top5_df),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+            fig2.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=520,
+                margin=dict(l=0, r=0, t=20, b=0),
+                xaxis=dict(
+                    title="낙폭 후 경과일 (거래일 기준)",
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickfont=dict(size=11, color="#9ca3af"),
+                ),
+                yaxis=dict(
+                    title="수익률 (%)",
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickfont=dict(size=11, color="#9ca3af"),
+                    ticksuffix="%",
+                ),
+                legend=dict(
+                    font=dict(size=10, color="#9ca3af"),
+                    bgcolor="rgba(0,0,0,0)",
+                    orientation="v",
+                    x=1.01, y=1,
+                ),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
 
             # ── 엑셀 다운로드 ──
-            st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
             fname_map = {"sp500": "SP500", "nasdaq": "NASDAQ", "kospi": "KOSPI"}
             fname = fname_map[key]
 
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                # Sheet1: 시뮬레이션 결과
                 result_df.to_excel(writer, sheet_name="시뮬레이션 결과", index=False)
-
-                # Sheet2: 요약 통계
                 if summary_rows:
                     pd.DataFrame(summary_rows).to_excel(
                         writer, sheet_name="요약 통계", index=False
                     )
-
-                # Sheet3: 최적 시점 TOP5 (숫자 원본)
-                if not top5_raw.empty:
-                    top5_export = top5_raw.copy()
-                    for col in ["평균 수익률", "최대 수익", "최소 수익"]:
-                        top5_export[col] = top5_export[col].apply(lambda v: round(v, 4))
-                    top5_export["상승 확률"] = top5_export["상승 확률"].apply(
-                        lambda v: round(v / 100, 4)
-                    )
-                    top5_export.to_excel(writer, sheet_name="최적 시점 TOP5", index=False)
+                # 200일 경로 데이터
+                if paths:
+                    path_rows = []
+                    for x_vals, y_vals, label, rank in paths:
+                        for xi, yi in zip(x_vals, y_vals):
+                            path_rows.append({"이벤트": label, "경과일": xi, "수익률(%)": round(yi, 4)})
+                    pd.DataFrame(path_rows).to_excel(writer, sheet_name="200일 경로", index=False)
 
             st.download_button(
                 label=f"📥 {fname} 엑셀 다운로드",
