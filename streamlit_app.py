@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import date
+import io
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -1019,11 +1020,13 @@ def main():
                                 "샘플 수":     len(vals),
                             })
 
+            top5_raw = pd.DataFrame()
             if grid_rows:
-                grid_df = pd.DataFrame(grid_rows).sort_values("평균 수익률", ascending=False)
-                top5_df = grid_df.head(5).copy().reset_index(drop=True)
-                top5_df.insert(0, "순위", range(1, len(top5_df) + 1))
+                grid_df  = pd.DataFrame(grid_rows).sort_values("평균 수익률", ascending=False)
+                top5_raw = grid_df.head(5).copy().reset_index(drop=True)
+                top5_raw.insert(0, "순위", range(1, len(top5_raw) + 1))
 
+                top5_df = top5_raw.copy()
                 for col in ["평균 수익률", "최대 수익", "최소 수익"]:
                     top5_df[col] = top5_df[col].apply(lambda v: f"{v:+.2f}%")
                 top5_df["상승 확률"] = top5_df["상승 확률"].apply(lambda v: f"{v:.0f}%")
@@ -1033,6 +1036,40 @@ def main():
                     use_container_width=True,
                     hide_index=True,
                 )
+
+            # ── 엑셀 다운로드 ──
+            st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+            fname_map = {"sp500": "SP500", "nasdaq": "NASDAQ", "kospi": "KOSPI"}
+            fname = fname_map[key]
+
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                # Sheet1: 시뮬레이션 결과
+                result_df.to_excel(writer, sheet_name="시뮬레이션 결과", index=False)
+
+                # Sheet2: 요약 통계
+                if summary_rows:
+                    pd.DataFrame(summary_rows).to_excel(
+                        writer, sheet_name="요약 통계", index=False
+                    )
+
+                # Sheet3: 최적 시점 TOP5 (숫자 원본)
+                if not top5_raw.empty:
+                    top5_export = top5_raw.copy()
+                    for col in ["평균 수익률", "최대 수익", "최소 수익"]:
+                        top5_export[col] = top5_export[col].apply(lambda v: round(v, 4))
+                    top5_export["상승 확률"] = top5_export["상승 확률"].apply(
+                        lambda v: round(v / 100, 4)
+                    )
+                    top5_export.to_excel(writer, sheet_name="최적 시점 TOP5", index=False)
+
+            st.download_button(
+                label=f"📥 {fname} 엑셀 다운로드",
+                data=buf.getvalue(),
+                file_name=f"{fname}_낙폭시뮬레이션_상위{top_n}개_진입{entry_days}일.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_{key}",
+            )
 
         for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi")]:
             with tab:
