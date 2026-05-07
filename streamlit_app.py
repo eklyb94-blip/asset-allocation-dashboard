@@ -930,6 +930,62 @@ def main():
                     hide_index=True,
                 )
 
+            # ── 최적 진입 시점 분석 ──
+            st.markdown(
+                f'<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                f'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 12px;">'
+                f'🏆 최적 진입 시점 TOP 5 (낙폭 상위 {top_n}일 기준 · 평균 수익률 순)</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("진입 시점 0~5일 × 보유 기간 5/10/15/20/30/40/60일 — 42가지 조합 전수 분석")
+
+            entry_range = range(0, 6)
+            hold_range  = [5, 10, 15, 20, 30, 40, 60]
+
+            grid_rows = []
+            for ed in entry_range:
+                for hd in hold_range:
+                    vals = []
+                    for gr in df_drop.itertuples():
+                        dt_g  = getattr(gr, date_col)
+                        pos_g = df_full[df_full["Date"] == pd.Timestamp(dt_g)].index
+                        if len(pos_g) == 0:
+                            continue
+                        ci = pos_g[0]
+                        ei = ci + ed
+                        ti = ei + hd
+                        if ei >= len(df_full) or ti >= len(df_full):
+                            continue
+                        ep = df_full.loc[ei, "Close"]
+                        tp = df_full.loc[ti, "Close"]
+                        vals.append((tp - ep) / ep * 100)
+                    if vals:
+                        pos_cnt = sum(1 for v in vals if v > 0)
+                        grid_rows.append({
+                            "진입 시점":   f"낙폭 후 {ed}일",
+                            "보유 기간":   f"{hd}일",
+                            "평균 수익률": np.mean(vals),
+                            "최대 수익":   max(vals),
+                            "최소 수익":   min(vals),
+                            "상승 확률":   pos_cnt / len(vals) * 100,
+                            "샘플 수":     len(vals),
+                        })
+
+            if grid_rows:
+                grid_df = pd.DataFrame(grid_rows).sort_values("평균 수익률", ascending=False)
+                top5_df = grid_df.head(5).copy().reset_index(drop=True)
+                top5_df.index = range(1, 6)
+
+                for col in ["평균 수익률", "최대 수익", "최소 수익"]:
+                    top5_df[col] = top5_df[col].apply(lambda v: f"{v:+.2f}%")
+                top5_df["상승 확률"] = top5_df["상승 확률"].apply(lambda v: f"{v:.0f}%")
+
+                st.dataframe(
+                    style_sim_tab(top5_df),
+                    use_container_width=True,
+                    hide_index=False,
+                )
+
         for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi")]:
             with tab:
                 render_sim_tab(key)
