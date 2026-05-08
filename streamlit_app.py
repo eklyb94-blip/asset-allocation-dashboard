@@ -1441,11 +1441,11 @@ def main():
 
             # ── 가격 + 음영 차트 ──
             # 하락장별 DCA 첫 진입 시점 계산
-            dca_markers = {2: [], 3: [], 4: []}
+            dca_markers = {2: [], 4: []}
             for _, brow in cycles_df[cycles_df["_type"] == "bear"].iterrows():
                 m = (sig_count.index >= brow["_start"]) & (sig_count.index <= brow["_end"])
                 p_sig = sig_count[m]
-                for thr in [2, 3, 4]:
+                for thr in [2, 4]:
                     crossed = p_sig[p_sig >= thr]
                     if len(crossed) > 0:
                         dt = crossed.index[0]
@@ -1458,8 +1458,7 @@ def main():
                 '  <span style="color:#34d399;font-size:11px;">■ 상승장</span>'
                 '  <span style="color:#f87171;font-size:11px;">■ 하락장</span>'
                 '  <span style="color:#fbbf24;font-size:11px;">▲ 1차(신호2)</span>'
-                '  <span style="color:#fb923c;font-size:11px;">▲ 2차(신호3)</span>'
-                '  <span style="color:#f87171;font-size:11px;">▲ 3차(신호4)</span></div>',
+                '  <span style="color:#f87171;font-size:11px;">▲ 2차(신호4)</span></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1484,8 +1483,7 @@ def main():
             # 분할매수 진입 마커
             marker_cfg = [
                 (2, "#fbbf24", "▲ 1차 진입 (신호 2개)"),
-                (3, "#fb923c", "▲ 2차 진입 (신호 3개)"),
-                (4, "#f87171", "▲ 3차 진입 (신호 4개)"),
+                (4, "#f87171", "▲ 2차 진입 (신호 4개)"),
             ]
             for thr, color, label in marker_cfg:
                 pts = dca_markers[thr]
@@ -1560,7 +1558,7 @@ def main():
 
             # 기준선
             fig2.add_hline(y=2, line_dash="dot", line_color="#fbbf24", line_width=1.5,
-                           annotation_text="1·2차 진입 기준", annotation_position="right",
+                           annotation_text="1차 진입 기준", annotation_position="right",
                            annotation_font=dict(color="#fbbf24", size=10))
             fig2.add_hline(y=4, line_dash="dot", line_color="#f87171", line_width=1.5,
                            annotation_text="3차 진입 기준", annotation_position="right",
