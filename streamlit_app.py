@@ -1427,7 +1427,7 @@ def main():
             cur_chg   = f"{'+' if cur['_chg']>=0 else ''}{cur['_chg']*100:.1f}%"
             cur_days  = cur["기간(일)"]
 
-            # ── 요약 카드 ──
+            # ── 사이클 요약 카드 ──
             m1, m2, m3, m4, m5 = st.columns(5)
             with m1:
                 st.metric("현재 상태", cur_label,
@@ -1444,6 +1444,58 @@ def main():
                 st.metric("🔴 평균 기간 / 하락률",
                           f"{avg_bear_days:.0f}일",
                           delta=f"{avg_bear_ret:.1f}%")
+
+            # ── 전략6 성과 카드 ──
+            sim = sims.get(key, pd.DataFrame())
+            if not sim.empty:
+                s6_final   = sim["전략6"].iloc[-1]
+                bhmax_final = sim["BH_max"].iloc[-1]
+                bhmin_final = sim["BH_min"].iloc[-1]
+                stk_final  = sim["주식단독"].iloc[-1]
+
+                s6_ret   = s6_final   - 100
+                bh50_ret = bhmax_final - 100
+                bh25_ret = bhmin_final - 100
+                stk_ret  = stk_final  - 100
+
+                n_years  = sim["연도"].nunique()
+                s6_cagr  = ((s6_final / 100) ** (1 / n_years) - 1) * 100 if n_years > 0 else 0
+
+                vs_bh50  = s6_ret - bh50_ret
+                vs_stk   = s6_ret - stk_ret
+
+                st.markdown(
+                    '<div style="color:#5b9bd5;font-size:12px;font-weight:700;'
+                    'letter-spacing:1px;border-bottom:1px solid #1e2a3a;'
+                    'padding-bottom:5px;margin:16px 0 10px;">'
+                    '⚙️ 전략6 자산배분 성과 (백테스트)</div>',
+                    unsafe_allow_html=True,
+                )
+                n1, n2, n3, n4, n5 = st.columns(5)
+                with n1:
+                    st.metric("전략6 누적수익률",
+                              f"{s6_ret:+.0f}%",
+                              delta=f"CAGR {s6_cagr:+.1f}%")
+                with n2:
+                    st.metric("주식50% BH 누적",
+                              f"{bh50_ret:+.0f}%",
+                              delta=f"전략6 대비 {vs_bh50:+.0f}%p",
+                              delta_color="inverse")
+                with n3:
+                    st.metric("주식25% BH 누적",
+                              f"{bh25_ret:+.0f}%")
+                with n4:
+                    st.metric("주식단독 누적",
+                              f"{stk_ret:+.0f}%",
+                              delta=f"전략6 대비 {vs_stk:+.0f}%p",
+                              delta_color="inverse")
+                with n5:
+                    invest_cnt    = sim["투자"].sum()
+                    total_cnt     = len(sim)
+                    invest_rate   = invest_cnt / total_cnt * 100 if total_cnt > 0 else 0
+                    st.metric("투자 시즌 비율",
+                              f"{invest_rate:.0f}%",
+                              delta=f"{int(invest_cnt)}/{total_cnt} 시즌")
 
             # ── 신호 강도 계산 ──
             px2 = prices.copy()
