@@ -517,7 +517,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더"])
+    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -2022,6 +2022,167 @@ def main():
 | **S&P500 PER** | 15 이하 | 역사적 저평가 구간 |
 | **KOSPI PBR** | 1.0 이하 | 순자산 이하 거래 = 극단적 저평가 |
 """)
+
+
+    # ════════════════════════════════════════
+    # TAB 6: 연간 수익률
+    # ════════════════════════════════════════
+    with main_tab6:
+        st.markdown('<div class="section-title">📅 연간 수익률 — 10년 사이클 분석</div>', unsafe_allow_html=True)
+        st.caption("연도별 수익률과 10년 이동평균선으로 장기 사이클 패턴을 확인합니다.")
+
+        # ── 연간 수익률 계산 ──
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def calc_annual(key):
+            prices = raw[key]
+            if prices.empty:
+                return pd.DataFrame()
+            prices.index = pd.to_datetime(prices.index).tz_localize(None)
+            annual = prices.resample("YE").last()
+            ret = annual.pct_change().dropna() * 100
+            df = pd.DataFrame({
+                "연도": ret.index.year,
+                "수익률": ret.values.round(2),
+            })
+            df["10년평균"] = df["수익률"].rolling(10, min_periods=5).mean().round(2)
+            return df.reset_index(drop=True)
+
+        def render_annual_tab(key):
+            df = calc_annual(key)
+            if df.empty:
+                st.warning("데이터를 불러올 수 없습니다.")
+                return
+
+            # ── 요약 지표 ──
+            pos_years  = (df["수익률"] > 0).sum()
+            neg_years  = (df["수익률"] <= 0).sum()
+            avg_ret    = df["수익률"].mean()
+            max_row    = df.loc[df["수익률"].idxmax()]
+            min_row    = df.loc[df["수익률"].idxmin()]
+            last_10_avg = df.tail(10)["수익률"].mean()
+
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            with m1: st.metric("전체 분석 연도", f"{len(df)}년")
+            with m2: st.metric("상승 / 하락", f"{pos_years}년 / {neg_years}년")
+            with m3: st.metric("전체 평균 수익률", f"{avg_ret:+.1f}%")
+            with m4: st.metric("최근 10년 평균", f"{last_10_avg:+.1f}%")
+            with m5: st.metric("최고 수익 연도", f"{int(max_row['연도'])}년  {max_row['수익률']:+.1f}%")
+            with m6: st.metric("최저 수익 연도", f"{int(min_row['연도'])}년  {min_row['수익률']:+.1f}%")
+
+            # ── 꺽은선 차트 ──
+            st.markdown(
+                '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">'
+                '📈 연간 수익률 추이  '
+                '<span style="color:#60a5fa;font-size:11px;">━ 연간 수익률</span>'
+                '  <span style="color:#fbbf24;font-size:11px;">━ 10년 이동평균</span></div>',
+                unsafe_allow_html=True,
+            )
+
+            fig = go.Figure()
+
+            # 0% 기준선
+            fig.add_hline(y=0, line_color="#374151", line_width=1.5)
+
+            # 양수/음수 구간 채우기
+            fig.add_trace(go.Scatter(
+                x=df["연도"], y=df["수익률"].clip(lower=0),
+                fill="tozeroy", mode="none",
+                fillcolor="rgba(52,211,153,0.15)",
+                showlegend=False, hoverinfo="skip",
+            ))
+            fig.add_trace(go.Scatter(
+                x=df["연도"], y=df["수익률"].clip(upper=0),
+                fill="tozeroy", mode="none",
+                fillcolor="rgba(248,113,113,0.15)",
+                showlegend=False, hoverinfo="skip",
+            ))
+
+            # 연간 수익률 선
+            fig.add_trace(go.Scatter(
+                x=df["연도"], y=df["수익률"],
+                mode="lines+markers",
+                line=dict(color="#60a5fa", width=2),
+                marker=dict(
+                    size=7,
+                    color=["#34d399" if v >= 0 else "#f87171" for v in df["수익률"]],
+                    line=dict(color="#0a0e1a", width=1),
+                ),
+                name="연간 수익률",
+                hovertemplate="%{x}년<br>수익률: %{y:+.2f}%<extra></extra>",
+            ))
+
+            # 10년 이동평균선
+            df_ma = df.dropna(subset=["10년평균"])
+            fig.add_trace(go.Scatter(
+                x=df_ma["연도"], y=df_ma["10년평균"],
+                mode="lines",
+                line=dict(color="#fbbf24", width=2.5, dash="dot"),
+                name="10년 이동평균",
+                hovertemplate="%{x}년<br>10년평균: %{y:+.2f}%<extra></extra>",
+            ))
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=480,
+                margin=dict(l=0, r=0, t=20, b=0),
+                xaxis=dict(
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickmode="linear", dtick=5,
+                    tickfont=dict(size=11, color="#9ca3af"),
+                ),
+                yaxis=dict(
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickfont=dict(size=11, color="#9ca3af"),
+                    ticksuffix="%",
+                    zeroline=False,
+                ),
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0,
+                    font=dict(size=11, color="#d1d5db"),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ── 연도별 수익률 테이블 ──
+            st.markdown(
+                '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
+                'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">'
+                '📋 연도별 수익률</div>',
+                unsafe_allow_html=True,
+            )
+
+            tbl = df.iloc[::-1].copy().reset_index(drop=True)
+            tbl["연도"] = tbl["연도"].astype(int)
+            tbl["수익률"] = tbl["수익률"].apply(lambda x: f"{x:+.2f}%")
+            tbl["10년평균"] = tbl["10년평균"].apply(
+                lambda x: f"{x:+.2f}%" if pd.notna(x) else "—"
+            )
+
+            def style_annual(df):
+                def _c(val):
+                    s = str(val)
+                    if s.startswith("+"):  return "color:#34d399;font-weight:600"
+                    if s.startswith("-"):  return "color:#f87171;font-weight:600"
+                    return "color:#d1d5db"
+                return df.style.map(_c)
+
+            st.dataframe(
+                style_annual(tbl),
+                use_container_width=True,
+                height=min(100 + len(tbl) * 36, 700),
+                hide_index=True,
+            )
+
+        ann_s, ann_n, ann_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
+        for tab, key in [(ann_s, "sp500"), (ann_n, "nasdaq"), (ann_k, "kospi")]:
+            with tab:
+                render_annual_tab(key)
 
 
 if __name__ == "__main__":
