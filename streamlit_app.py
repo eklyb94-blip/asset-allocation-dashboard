@@ -2104,7 +2104,7 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            x_labels = [f"{d}년\n({r['해당연도'][:4]}...)" for d, r in zip(cum_df["끝자리"], cum_df.itertuples())]
+            x_labels = [f"{d}년\n({str(yrs)[:4]}...)" for d, yrs in zip(cum_df["끝자리"], cum_df["해당연도"])]
             x_ticks  = [f"끝자리 {d}" for d in cum_df["끝자리"]]
 
             fig = go.Figure()
