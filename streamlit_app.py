@@ -2047,15 +2047,17 @@ def main():
             # 끝자리별 해당 연도 목록 및 평균 수익률
             rows = []
             for digit in range(10):
-                yr_list = [y for y in years if y % 10 == digit]
-                rets    = [ann_ret[ann_ret.index.year == y].values[0] * 100
-                           for y in yr_list
-                           if len(ann_ret[ann_ret.index.year == y]) > 0]
-                avg = round(np.mean(rets), 2) if rets else np.nan
-                up_cnt = sum(1 for r in rets if r > 0)
+                yr_list  = [y for y in years if y % 10 == digit]
+                yr_rets  = [(y, ann_ret[ann_ret.index.year == y].values[0] * 100)
+                            for y in yr_list
+                            if len(ann_ret[ann_ret.index.year == y]) > 0]
+                rets     = [r for _, r in yr_rets]
+                avg      = round(np.mean(rets), 2) if rets else np.nan
+                up_cnt   = sum(1 for r in rets if r > 0)
                 rows.append({
                     "끝자리":    digit,
                     "해당연도":  "·".join(str(y) for y in yr_list),
+                    "연도수익률": yr_rets,   # [(year, ret%), ...]
                     "평균수익률": avg,
                     "데이터수":  len(rets),
                     "상승수":    up_cnt,
@@ -2073,6 +2075,7 @@ def main():
                     "평균수익률": r["평균수익률"],
                     "누적수익률": round(cum - 100, 2),
                     "해당연도":  r["해당연도"],
+                    "연도수익률": r["연도수익률"],
                     "데이터수":  int(r["데이터수"]),
                     "상승수":    int(r["상승수"]),
                 })
@@ -2187,27 +2190,54 @@ def main():
                 '📋 끝자리별 상세 데이터</div>',
                 unsafe_allow_html=True,
             )
-            tbl = cum_df.copy()
-            tbl["끝자리"] = tbl["끝자리"].apply(lambda x: f"끝자리 {x}년")
-            tbl["평균수익률"] = tbl["평균수익률"].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
-            tbl["누적수익률"] = tbl["누적수익률"].apply(lambda x: f"{x:+.2f}%")
-            tbl["표본수"] = tbl.apply(lambda r: f"{int(r['상승수'])}/{int(r['데이터수'])}", axis=1)
-            tbl = tbl.drop(columns=["데이터수", "상승수"])
+            def _val_color(v):
+                if pd.isna(v):   return "#d1d5db"
+                return "#34d399" if v >= 0 else "#f87171"
 
-            def style_tbl(df):
-                def _c(val):
-                    s = str(val)
-                    if s.startswith("+"): return "color:#34d399;font-weight:600"
-                    if s.startswith("-"): return "color:#f87171;font-weight:600"
-                    return "color:#d1d5db"
-                return df.style.map(_c)
+            def _yr_cell(yr_rets):
+                parts = []
+                for y, r in yr_rets:
+                    c   = "#34d399" if r >= 0 else "#f87171"
+                    sgn = "+" if r >= 0 else ""
+                    parts.append(
+                        f'<span style="color:{c};white-space:nowrap">'
+                        f'{y}({sgn}{r:.0f}%)</span>'
+                    )
+                return " &nbsp;·&nbsp; ".join(parts)
 
-            st.dataframe(
-                style_tbl(tbl),
-                use_container_width=True,
-                height=430,
-                hide_index=True,
+            html_rows = []
+            for _, r in cum_df.iterrows():
+                avg_c  = _val_color(r["평균수익률"])
+                cum_c  = _val_color(r["누적수익률"])
+                avg_s  = f'{r["평균수익률"]:+.2f}%' if pd.notna(r["평균수익률"]) else "—"
+                cum_s  = f'{r["누적수익률"]:+.2f}%'
+                sample = f'{int(r["상승수"])}/{int(r["데이터수"])}'
+                yr_html = _yr_cell(r["연도수익률"])
+                html_rows.append(
+                    f'<tr>'
+                    f'<td style="padding:7px 12px;color:#d1d5db;white-space:nowrap">끝자리 {int(r["끝자리"])}년</td>'
+                    f'<td style="padding:7px 12px;color:{avg_c};font-weight:600;text-align:right">{avg_s}</td>'
+                    f'<td style="padding:7px 12px;color:{cum_c};font-weight:600;text-align:right">{cum_s}</td>'
+                    f'<td style="padding:7px 16px;font-size:12px;line-height:1.8">{yr_html}</td>'
+                    f'<td style="padding:7px 12px;color:#9ca3af;text-align:center">{sample}</td>'
+                    f'</tr>'
+                )
+
+            th = ("끝자리", "평균수익률", "누적수익률", "해당연도 (수익률)", "상승/표본수")
+            thead = "".join(
+                f'<th style="padding:8px 12px;color:#5b9bd5;font-weight:700;'
+                f'border-bottom:1px solid #1e2a3a;text-align:{"right" if i in (1,2) else "center" if i==4 else "left"}">'
+                f'{h}</th>'
+                for i, h in enumerate(th)
             )
+            html_tbl = (
+                '<div style="overflow-x:auto">'
+                '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+                f'<thead><tr>{thead}</tr></thead>'
+                f'<tbody>{"".join(html_rows)}</tbody>'
+                '</table></div>'
+            )
+            st.markdown(html_tbl, unsafe_allow_html=True)
 
         ann_s, ann_n, ann_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
         for tab, key in [(ann_s, "sp500"), (ann_n, "nasdaq"), (ann_k, "kospi")]:
