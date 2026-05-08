@@ -85,27 +85,70 @@ DURATION_US = 18.0   # 미국 30년채 Modified Duration 근사
 # ═══════════════════════════════════════════
 # 데이터 로딩 (1시간 캐시)
 # ═══════════════════════════════════════════
+# 오프라인 폴백: 최신 백업 CSV 경로 탐색
+# ═══════════════════════════════════════════
+def _latest_backup_dir():
+    """backup/ 폴더에서 가장 최근 날짜 폴더를 반환. 없으면 None."""
+    bd = pathlib.Path(__file__).parent / "backup"
+    if not bd.exists():
+        return None
+    dirs = sorted(
+        [d for d in bd.iterdir() if d.is_dir() and d.name.isdigit() and len(d.name) == 8],
+        reverse=True,
+    )
+    return dirs[0] if dirs else None
+
+def _load_csv_fallback(name: str) -> pd.Series:
+    """최신 백업 CSV에서 Close 시리즈를 읽어 반환."""
+    latest = _latest_backup_dir()
+    if latest is None:
+        return pd.Series(dtype=float)
+    csv_path = latest / "data" / f"{name}.csv"
+    if not csv_path.exists():
+        return pd.Series(dtype=float)
+    df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+    if "Close" not in df.columns:
+        return pd.Series(dtype=float)
+    s = df["Close"].dropna()
+    s.index = pd.to_datetime(s.index).tz_localize(None)
+    return s
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_raw():
-    def dl(ticker, start):
-        df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
-                         multi_level_index=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        if "Close" not in df.columns:
-            return pd.Series(dtype=float)
-        return df["Close"].dropna()
-
-    return {
-        "sp500":  dl("^GSPC",     "1985-01-01"),
-        "nasdaq": dl("^IXIC",     "1985-01-01"),
-        "kospi":  dl("^KS11",     "1985-01-01"),
-        "dow":    dl("^DJI",      "1985-01-01"),
-        "kosdaq": dl("^KQ11",     "1997-01-01"),
-        "gold":   dl("GC=F",      "2000-01-01"),
-        "us30y":  dl("^TYX",      "1985-01-01"),
-        "krbond": dl("114820.KS", "2009-01-01"),
+    # 티커 → (yfinance 티커, 시작일, 백업 CSV 파일명)
+    _ticker_map = {
+        "sp500":  ("^GSPC",     "1985-01-01", "SP500"),
+        "nasdaq": ("^IXIC",     "1985-01-01", "NASDAQ"),
+        "kospi":  ("^KS11",     "1985-01-01", "KOSPI"),
+        "dow":    ("^DJI",      "1985-01-01", "DOW"),
+        "kosdaq": ("^KQ11",     "1997-01-01", "KOSDAQ"),
+        "gold":   ("GC=F",      "2000-01-01", "GOLD"),
+        "us30y":  ("^TYX",      "1985-01-01", "US30Y"),
+        "krbond": ("114820.KS", "2009-01-01", "KRBOND"),
     }
+
+    def dl(ticker, start, csv_name):
+        try:
+            df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
+                             multi_level_index=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if "Close" not in df.columns or df.empty:
+                raise ValueError("no data")
+            return df["Close"].dropna(), False          # (data, is_offline)
+        except Exception:
+            return _load_csv_fallback(csv_name), True   # 오프라인 폴백
+
+    results, offline_flags = {}, {}
+    for key, (ticker, start, csv_name) in _ticker_map.items():
+        results[key], offline_flags[key] = dl(ticker, start, csv_name)
+
+    # 오프라인 여부를 session_state에 기록 (UI 배너용)
+    is_offline = any(offline_flags.values())
+    latest     = _latest_backup_dir()
+    st.session_state["_offline_mode"]   = is_offline
+    st.session_state["_offline_date"]   = latest.name if latest else "알 수 없음"
+    return results
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -170,18 +213,24 @@ def load_multpl(url):
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_daily_ohlc():
     tickers = {
-        "sp500":  ("^GSPC", "1985-01-01"),
-        "nasdaq": ("^IXIC", "1985-01-01"),
-        "kospi":  ("^KS11", "1990-01-01"),
-        "dow":    ("^DJI",  "1985-01-01"),
-        "kosdaq": ("^KQ11", "1997-01-01"),
+        "sp500":  ("^GSPC", "1985-01-01", "SP500"),
+        "nasdaq": ("^IXIC", "1985-01-01", "NASDAQ"),
+        "kospi":  ("^KS11", "1990-01-01", "KOSPI"),
+        "dow":    ("^DJI",  "1985-01-01", "DOW"),
+        "kosdaq": ("^KQ11", "1997-01-01", "KOSDAQ"),
     }
     result = {}
-    for key, (ticker, start) in tickers.items():
-        df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
-                         multi_level_index=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+    for key, (ticker, start, csv_name) in tickers.items():
+        try:
+            df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
+                             multi_level_index=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if "Close" not in df.columns or df.empty:
+                raise ValueError("no data")
+        except Exception:
+            s = _load_csv_fallback(csv_name)
+            df = s.to_frame("Close") if not s.empty else pd.DataFrame(columns=["Close"])
         if "Close" not in df.columns:
             result[key] = pd.DataFrame(columns=["Close", "prev_close", "daily_ret"])
             continue
@@ -559,6 +608,15 @@ def main():
           </div>
         </div>
         """, unsafe_allow_html=True)
+
+        # ── 오프라인 모드 경고 배너 ──
+        if st.session_state.get("_offline_mode"):
+            _odate = st.session_state.get("_offline_date", "알 수 없음")
+            st.warning(
+                f"📴 **오프라인 모드** — 인터넷 연결 없음. "
+                f"백업 데이터({_odate}) 기준으로 표시됩니다.",
+                icon="📴",
+            )
 
         # ── 2. 현재 권장 자산배분 카드 ──
         st.markdown('<div class="section-title">🎯 현재 권장 자산배분</div>', unsafe_allow_html=True)
