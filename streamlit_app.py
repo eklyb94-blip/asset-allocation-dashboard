@@ -2052,11 +2052,13 @@ def main():
                            for y in yr_list
                            if len(ann_ret[ann_ret.index.year == y]) > 0]
                 avg = round(np.mean(rets), 2) if rets else np.nan
+                up_cnt = sum(1 for r in rets if r > 0)
                 rows.append({
                     "끝자리":    digit,
                     "해당연도":  "·".join(str(y) for y in yr_list),
                     "평균수익률": avg,
                     "데이터수":  len(rets),
+                    "상승수":    up_cnt,
                 })
             digit_df = pd.DataFrame(rows)
 
@@ -2072,6 +2074,7 @@ def main():
                     "누적수익률": round(cum - 100, 2),
                     "해당연도":  r["해당연도"],
                     "데이터수":  int(r["데이터수"]),
+                    "상승수":    int(r["상승수"]),
                 })
             cum_df = pd.DataFrame(cum_rows)
             return digit_df, cum_df
@@ -2188,7 +2191,8 @@ def main():
             tbl["끝자리"] = tbl["끝자리"].apply(lambda x: f"끝자리 {x}년")
             tbl["평균수익률"] = tbl["평균수익률"].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
             tbl["누적수익률"] = tbl["누적수익률"].apply(lambda x: f"{x:+.2f}%")
-            tbl = tbl.rename(columns={"데이터수": "표본수"})
+            tbl["표본수"] = tbl.apply(lambda r: f"{int(r['상승수'])}/{int(r['데이터수'])}", axis=1)
+            tbl = tbl.drop(columns=["데이터수", "상승수"])
 
             def style_tbl(df):
                 def _c(val):
