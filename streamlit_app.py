@@ -1700,6 +1700,46 @@ def main():
             )
             st.plotly_chart(fig2, use_container_width=True)
 
+            # ── 전략6 월별 포트폴리오 가치 계산 (사이클 기간 매핑용) ──
+            bond_key  = "krbond" if key in ("kospi", "kosdaq") else "us30y"
+            stk_m     = monthly[key]
+            gold_m    = monthly["gold"]
+            if bond_key == "us30y":
+                bond_m = (-DURATION_US * raw["us30y"].resample("ME").last().diff() / 100).dropna()
+            else:
+                bond_m = monthly["krbond"]
+
+            inv_na_s = strategies[key]["inv_na"]
+            inv_mo_s = strategies[key]["inv_mo"]
+
+            _v   = 100.0
+            _s6v = {}
+            for _d in stk_m.index:
+                _m = _d.month
+                _sy = _d.year - 1 if _m in [1, 2, 3, 4] else _d.year
+                _season  = "Nov-Apr" if _m in [11, 12, 1, 2, 3, 4] else "May-Oct"
+                _inv_set = inv_na_s if _season == "Nov-Apr" else inv_mo_s
+                _invested = (_sy % 10) in _inv_set
+                _rs = float(stk_m[_d]) if _d in stk_m.index else 0.0
+                _rg = float(gold_m[_d]) if _d in gold_m.index else 0.0
+                _rb = float(bond_m[_d]) if _d in bond_m.index else 0.0
+                _r  = (0.50*_rs + 0.25*_rg + 0.25*_rb) if _invested \
+                      else (0.25*_rs + 0.25*_rg + 0.25*_rb)
+                _v *= (1 + _r)
+                _s6v[_d] = _v
+            s6_monthly = pd.Series(_s6v)
+
+            def s6_period_ret(start, end):
+                """사이클 기간의 전략6 수익률(%) 반환"""
+                try:
+                    sv = s6_monthly.asof(pd.Timestamp(start))
+                    ev = s6_monthly.asof(pd.Timestamp(end))
+                    if pd.isna(sv) or pd.isna(ev) or sv == 0:
+                        return None
+                    return (ev / sv - 1) * 100
+                except Exception:
+                    return None
+
             # ── 사이클 테이블 (최신순) ──
             st.markdown(
                 '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
@@ -1708,7 +1748,15 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            disp = cycles_df[["구분","시작일","시작가","종료일","종료가","기간(일)","기간(월)","변동률"]].copy()
+            # 전략6 성과 컬럼 추가
+            cycles_df["전략6(%)"] = cycles_df.apply(
+                lambda r: s6_period_ret(r["_start"], r["_end"]), axis=1
+            )
+            cycles_df["전략6(%)"] = cycles_df["전략6(%)"].apply(
+                lambda v: f"{v:+.1f}%" if v is not None and not pd.isna(v) else "—"
+            )
+
+            disp = cycles_df[["구분","시작일","시작가","종료일","종료가","기간(일)","기간(월)","변동률","전략6(%)"]].copy()
             disp = disp.iloc[::-1].reset_index(drop=True)
             disp.insert(0, "번호", range(1, len(disp) + 1))
 
