@@ -2025,155 +2025,170 @@ def main():
 
 
     # ════════════════════════════════════════
-    # TAB 6: 누적 수익률
+    # TAB 6: 끝자리 사이클 누적 수익률
     # ════════════════════════════════════════
     with main_tab6:
-        st.markdown('<div class="section-title">📅 누적 수익률 — 10년 사이클 분석</div>', unsafe_allow_html=True)
-        st.caption("연도별 누적 수익률 꺽은선으로 장기 사이클 패턴을 확인합니다. (시작 연도 = 0% 기준)")
+        st.markdown('<div class="section-title">📅 끝자리 사이클 누적 수익률 분석</div>', unsafe_allow_html=True)
+        st.caption("연도 끝자리(0~9)별 평균 수익률을 복리 누적하여 10년 사이클 패턴을 확인합니다.")
+        st.caption("예) 끝자리 0 = 1990·2000·2010·2020년 평균 / 끝자리 1 = 1991·2001·2011·2021년 평균 ...")
 
         @st.cache_data(ttl=3600, show_spinner=False)
-        def calc_cumulative(key):
+        def calc_digit_cycle(key):
             prices = raw[key]
             if prices.empty:
-                return pd.DataFrame()
+                return pd.DataFrame(), pd.DataFrame()
             prices.index = pd.to_datetime(prices.index).tz_localize(None)
-            # 연말 종가
+
+            # 연말 종가 → 연간 수익률
             annual = prices.resample("YE").last()
-            # 누적 수익률: 첫 해 기준 0%
-            base = annual.iloc[0]
-            cum_ret = (annual / base - 1) * 100
-            # 연간 수익률 (사이클 참고용)
-            ann_ret = annual.pct_change() * 100
-            # 10년 롤링 누적 수익률: 10년 전 대비 현재
-            rolling_10y = (annual / annual.shift(10) - 1) * 100
+            ann_ret = annual.pct_change().dropna()
+            years   = ann_ret.index.year
 
-            df = pd.DataFrame({
-                "연도":        annual.index.year,
-                "누적수익률":   cum_ret.values.round(1),
-                "연간수익률":   ann_ret.values.round(1),
-                "10년누적":    rolling_10y.values.round(1),
-            })
-            return df.reset_index(drop=True)
+            # 끝자리별 해당 연도 목록 및 평균 수익률
+            rows = []
+            for digit in range(10):
+                yr_list = [y for y in years if y % 10 == digit]
+                rets    = [ann_ret[ann_ret.index.year == y].values[0] * 100
+                           for y in yr_list
+                           if len(ann_ret[ann_ret.index.year == y]) > 0]
+                avg = round(np.mean(rets), 2) if rets else np.nan
+                rows.append({
+                    "끝자리":    digit,
+                    "해당연도":  "·".join(str(y) for y in yr_list),
+                    "평균수익률": avg,
+                    "데이터수":  len(rets),
+                })
+            digit_df = pd.DataFrame(rows)
 
-        def render_cumulative_tab(key):
-            df = calc_cumulative(key)
-            if df.empty:
+            # 복리 누적 수익률 (끝자리 0부터 9까지 순서대로)
+            cum = 100.0
+            cum_rows = []
+            for _, r in digit_df.iterrows():
+                if pd.notna(r["평균수익률"]):
+                    cum *= (1 + r["평균수익률"] / 100)
+                cum_rows.append({
+                    "끝자리":    int(r["끝자리"]),
+                    "평균수익률": r["평균수익률"],
+                    "누적수익률": round(cum - 100, 2),
+                    "해당연도":  r["해당연도"],
+                    "데이터수":  int(r["데이터수"]),
+                })
+            cum_df = pd.DataFrame(cum_rows)
+            return digit_df, cum_df
+
+        def render_digit_tab(key):
+            _, cum_df = calc_digit_cycle(key)
+            if cum_df.empty:
                 st.warning("데이터를 불러올 수 없습니다.")
                 return
 
-            total_ret   = df["누적수익률"].iloc[-1]
-            years       = len(df)
-            cagr        = ((1 + total_ret / 100) ** (1 / years) - 1) * 100 if years > 0 else 0
-            best_10y    = df["10년누적"].dropna()
-            best_10y_v  = best_10y.max()
-            worst_10y_v = best_10y.min()
-            best_10y_yr = int(df.loc[df["10년누적"] == best_10y_v, "연도"].iloc[0]) if len(best_10y) else "-"
-            worst_10y_yr= int(df.loc[df["10년누적"] == worst_10y_v, "연도"].iloc[0]) if len(best_10y) else "-"
+            # ── 요약 카드 ──
+            best_row  = cum_df.loc[cum_df["평균수익률"].idxmax()]
+            worst_row = cum_df.loc[cum_df["평균수익률"].idxmin()]
+            total_cum = cum_df["누적수익률"].iloc[-1]
+            avg_ann   = cum_df["평균수익률"].mean()
 
-            m1, m2, m3, m4, m5 = st.columns(5)
-            with m1: st.metric("전체 누적 수익률", f"{total_ret:+.1f}%")
-            with m2: st.metric("분석 기간", f"{years}년")
-            with m3: st.metric("연평균 수익률(CAGR)", f"{cagr:+.2f}%")
-            with m4: st.metric("최고 10년 구간", f"~{best_10y_yr}년  {best_10y_v:+.1f}%")
-            with m5: st.metric("최저 10년 구간", f"~{worst_10y_yr}년  {worst_10y_v:+.1f}%")
+            m1, m2, m3, m4 = st.columns(4)
+            with m1: st.metric("10년 사이클 누적 수익률", f"{total_cum:+.1f}%")
+            with m2: st.metric("끝자리별 평균 연수익률", f"{avg_ann:+.2f}%")
+            with m3: st.metric("최고 끝자리", f"끝자리 {int(best_row['끝자리'])}년  {best_row['평균수익률']:+.1f}%")
+            with m4: st.metric("최저 끝자리", f"끝자리 {int(worst_row['끝자리'])}년  {worst_row['평균수익률']:+.1f}%")
 
-            # ── 차트1: 전체 누적 수익률 ──
+            # ── 차트 ──
             st.markdown(
                 '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
                 'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">'
-                '📈 전체 누적 수익률  '
-                '<span style="color:#60a5fa;font-size:11px;">━ 누적 수익률 (시작=0%)</span></div>',
+                '📈 끝자리 사이클 누적 수익률 (복리)  '
+                '<span style="color:#a78bfa;font-size:11px;">━ 누적수익률</span>'
+                '  <span style="color:#60a5fa;font-size:11px;">━ 끝자리별 평균수익률</span></div>',
                 unsafe_allow_html=True,
             )
 
-            fig1 = go.Figure()
-            fig1.add_hline(y=0, line_color="#374151", line_width=1)
-            fig1.add_trace(go.Scatter(
-                x=df["연도"], y=df["누적수익률"],
+            x_labels = [f"{d}년\n({r['해당연도'][:4]}...)" for d, r in zip(cum_df["끝자리"], cum_df.itertuples())]
+            x_ticks  = [f"끝자리 {d}" for d in cum_df["끝자리"]]
+
+            fig = go.Figure()
+
+            # 누적수익률 꺽은선 (주축)
+            fig.add_trace(go.Scatter(
+                x=cum_df["끝자리"], y=cum_df["누적수익률"],
                 mode="lines+markers",
-                line=dict(color="#60a5fa", width=2),
-                marker=dict(size=5, color="#60a5fa"),
-                fill="tozeroy",
-                fillcolor="rgba(96,165,250,0.1)",
+                line=dict(color="#a78bfa", width=3),
+                marker=dict(
+                    size=10,
+                    color=["#34d399" if v >= 0 else "#f87171" for v in cum_df["누적수익률"]],
+                    line=dict(color="#0a0e1a", width=1.5),
+                ),
                 name="누적수익률",
-                hovertemplate="%{x}년<br>누적: %{y:+.1f}%<extra></extra>",
-            ))
-            fig1.update_layout(
-                template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
-                height=360, margin=dict(l=0, r=0, t=10, b=0),
-                xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
-                           tickmode="linear", dtick=5,
-                           tickfont=dict(size=11, color="#9ca3af")),
-                yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
-                           tickfont=dict(size=11, color="#9ca3af"), ticksuffix="%"),
-                showlegend=False, hovermode="x unified",
-            )
-            st.plotly_chart(fig1, use_container_width=True)
-
-            # ── 차트2: 10년 롤링 누적 수익률 (사이클 확인) ──
-            st.markdown(
-                '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
-                'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">'
-                '🔄 10년 롤링 누적 수익률  '
-                '<span style="color:#a78bfa;font-size:11px;">━ 해당 연도 기준 직전 10년 누적</span>'
-                '  <span style="color:#fbbf24;font-size:11px;">--- 0%</span></div>',
-                unsafe_allow_html=True,
-            )
-            st.caption("이 차트에서 사이클을 확인하세요 — 10년 수익률이 반복적인 패턴을 보이는지 파악")
-
-            df_10 = df.dropna(subset=["10년누적"])
-            fig2 = go.Figure()
-            fig2.add_hline(y=0, line_color="#fbbf24", line_width=1, line_dash="dash")
-
-            # 양수/음수 구간 배경
-            fig2.add_trace(go.Scatter(
-                x=df_10["연도"], y=df_10["10년누적"].clip(lower=0),
-                fill="tozeroy", mode="none",
-                fillcolor="rgba(52,211,153,0.12)", showlegend=False, hoverinfo="skip",
-            ))
-            fig2.add_trace(go.Scatter(
-                x=df_10["연도"], y=df_10["10년누적"].clip(upper=0),
-                fill="tozeroy", mode="none",
-                fillcolor="rgba(248,113,113,0.12)", showlegend=False, hoverinfo="skip",
+                yaxis="y1",
+                hovertemplate="끝자리 %{x}년<br>누적수익률: %{y:+.1f}%<extra></extra>",
             ))
 
-            fig2.add_trace(go.Scatter(
-                x=df_10["연도"], y=df_10["10년누적"],
+            # 끝자리별 평균수익률 꺽은선 (보조축)
+            fig.add_trace(go.Scatter(
+                x=cum_df["끝자리"], y=cum_df["평균수익률"],
                 mode="lines+markers",
-                line=dict(color="#a78bfa", width=2.5),
+                line=dict(color="#60a5fa", width=2, dash="dot"),
                 marker=dict(
                     size=8,
-                    color=["#34d399" if v >= 0 else "#f87171" for v in df_10["10년누적"]],
+                    color=["#34d399" if v >= 0 else "#f87171" for v in cum_df["평균수익률"]],
                     line=dict(color="#0a0e1a", width=1),
                 ),
-                name="10년 누적수익률",
-                hovertemplate="%{x}년 (직전 10년)<br>누적: %{y:+.1f}%<extra></extra>",
+                name="끝자리별 평균수익률",
+                yaxis="y2",
+                hovertemplate="끝자리 %{x}년<br>평균수익률: %{y:+.1f}%<extra></extra>",
             ))
-            fig2.update_layout(
-                template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
-                height=360, margin=dict(l=0, r=0, t=10, b=0),
-                xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
-                           tickmode="linear", dtick=5,
-                           tickfont=dict(size=11, color="#9ca3af")),
-                yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
-                           tickfont=dict(size=11, color="#9ca3af"), ticksuffix="%"),
-                showlegend=False, hovermode="x unified",
+
+            fig.add_hline(y=0, line_color="#374151", line_width=1, yref="y2")
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=460,
+                margin=dict(l=0, r=60, t=20, b=0),
+                xaxis=dict(
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickmode="array",
+                    tickvals=list(range(10)),
+                    ticktext=x_ticks,
+                    tickfont=dict(size=11, color="#9ca3af"),
+                ),
+                yaxis=dict(
+                    title="누적수익률 (%)",
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickfont=dict(size=11, color="#9ca3af"),
+                    ticksuffix="%",
+                    title_font=dict(color="#a78bfa"),
+                ),
+                yaxis2=dict(
+                    title="평균수익률 (%)",
+                    overlaying="y", side="right",
+                    showgrid=False,
+                    tickfont=dict(size=11, color="#60a5fa"),
+                    ticksuffix="%",
+                    title_font=dict(color="#60a5fa"),
+                ),
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    font=dict(size=11, color="#d1d5db"), bgcolor="rgba(0,0,0,0)",
+                ),
+                hovermode="x unified",
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
             # ── 테이블 ──
             st.markdown(
                 '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
                 'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:20px 0 12px;">'
-                '📋 연도별 데이터</div>',
+                '📋 끝자리별 상세 데이터</div>',
                 unsafe_allow_html=True,
             )
-            tbl = df.iloc[::-1].copy().reset_index(drop=True)
-            tbl["연도"] = tbl["연도"].astype(int)
-            for col in ["누적수익률", "연간수익률", "10년누적"]:
-                tbl[col] = tbl[col].apply(
-                    lambda x: f"{x:+.1f}%" if pd.notna(x) else "—"
-                )
+            tbl = cum_df.copy()
+            tbl["끝자리"] = tbl["끝자리"].apply(lambda x: f"끝자리 {x}년")
+            tbl["평균수익률"] = tbl["평균수익률"].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "—")
+            tbl["누적수익률"] = tbl["누적수익률"].apply(lambda x: f"{x:+.2f}%")
+            tbl = tbl.rename(columns={"데이터수": "표본수"})
 
             def style_tbl(df):
                 def _c(val):
@@ -2186,14 +2201,14 @@ def main():
             st.dataframe(
                 style_tbl(tbl),
                 use_container_width=True,
-                height=min(100 + len(tbl) * 36, 700),
+                height=430,
                 hide_index=True,
             )
 
         ann_s, ann_n, ann_k = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI"])
         for tab, key in [(ann_s, "sp500"), (ann_n, "nasdaq"), (ann_k, "kospi")]:
             with tab:
-                render_cumulative_tab(key)
+                render_digit_tab(key)
 
 
 if __name__ == "__main__":
