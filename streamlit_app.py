@@ -774,7 +774,7 @@ def main():
         st.markdown('<div class="section-title">📊 장기 백테스트 성과</div>', unsafe_allow_html=True)
 
         def _daily_pf_series(key):
-            """일별 포트폴리오 가치 시리즈 반환 (시작=100) — 정밀 MDD 계산용"""
+            """일별 포트폴리오 가치 시리즈 반환 — 전략6/전략7/BH/주식단독"""
             sim = sims.get(key, pd.DataFrame())
             if sim.empty:
                 return {}
@@ -783,131 +783,179 @@ def main():
             # 일별 수익률
             d_stk  = raw[key].pct_change().dropna()
             d_gold = raw["gold"].pct_change().dropna()
-            if bond_key == "us30y":
-                d_bond = (-DURATION_US * raw["us30y"].diff() / 100).dropna()
+            d_bond = (-DURATION_US * raw["us30y"].diff() / 100).dropna() \
+                     if bond_key == "us30y" else raw["krbond"].pct_change().dropna()
+
+            for s in [d_stk, d_gold, d_bond]:
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+
+            # ── 전략7용 신호 계산 ──
+            px = raw[key].copy()
+            px.index = pd.to_datetime(px.index).tz_localize(None)
+
+            dd_s   = (px - px.cummax()) / px.cummax() * 100
+            dlt    = px.diff()
+            gain   = dlt.clip(lower=0).rolling(14).mean()
+            loss   = (-dlt.clip(upper=0)).rolling(14).mean()
+            rsi_s  = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
+            ma200  = px.rolling(200).mean()
+            ma_g   = (px - ma200) / ma200 * 100
+            ma20   = px.rolling(20).mean()
+            std20  = px.rolling(20).std()
+            bb_rng = (ma20 + 2*std20) - (ma20 - 2*std20)
+            bb_p   = (px - (ma20 - 2*std20)) / bb_rng.replace(0, np.nan) * 100
+
+            if key in ("kospi", "kosdaq"):
+                s_vol = (px.pct_change().rolling(20).std() * (252**0.5) * 100 >= 35).astype(int)
             else:
-                d_bond = raw["krbond"].pct_change().dropna()
+                vix_h = load_vix_history()
+                vix_h.index = pd.to_datetime(vix_h.index).tz_localize(None)
+                vix_r = vix_h.reindex(px.index, method="ffill").fillna(20)
+                s_vol = (vix_r >= 40).astype(int)
 
-            # 타임존 통일
-            d_stk.index  = pd.to_datetime(d_stk.index).tz_localize(None)
-            d_gold.index = pd.to_datetime(d_gold.index).tz_localize(None)
-            d_bond.index = pd.to_datetime(d_bond.index).tz_localize(None)
+            sig = ((dd_s <= -30).astype(int) + (rsi_s <= 30).astype(int) +
+                   (ma_g  <= -15).astype(int) + (bb_p  <=   0).astype(int) +
+                   s_vol).fillna(0)
+            sig_dict = sig.to_dict()
 
-            # 시즌별 투자 여부 맵: (sim_year, season) → bool
-            invest_map = {}
-            for _, row in sim.iterrows():
-                invest_map[(int(row["연도"]), row["시즌"])] = bool(row["투자"])
+            # 시즌별 투자 여부 맵
+            invest_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in sim.iterrows()}
 
-            vals  = {"전략6": [], "BH_max": [], "BH_min": [], "주식단독": []}
-            v     = {"전략6": 100.0, "BH_max": 100.0, "BH_min": 100.0, "주식단독": 100.0}
+            cols  = ["전략6", "전략7", "BH_max", "BH_min", "주식단독"]
+            vals  = {c: [] for c in cols}
+            v     = {c: 100.0 for c in cols}
             dates = []
-
             gold_idx = set(d_gold.index)
             bond_idx = set(d_bond.index)
+            s7_sell  = False  # 전략7 매도 상태
 
             for dt in d_stk.index:
                 mo = dt.month
-                if mo >= 11:
-                    season, sim_year = "Nov-Apr", dt.year
-                elif mo <= 4:
-                    season, sim_year = "Nov-Apr", dt.year - 1
-                else:
-                    season, sim_year = "May-Oct", dt.year
+                if mo >= 11:   season, sy = "Nov-Apr", dt.year
+                elif mo <= 4:  season, sy = "Nov-Apr", dt.year - 1
+                else:          season, sy = "May-Oct", dt.year
 
-                invest = invest_map.get((sim_year, season), False)
+                invest = invest_map.get((sy, season), False)
                 rs = float(d_stk[dt])
                 rg = float(d_gold[dt]) if dt in gold_idx else 0.0
                 rb = float(d_bond[dt]) if dt in bond_idx else 0.0
 
-                r_s6   = (0.50*rs + 0.25*rg + 0.25*rb) if invest \
-                         else (0.25*rs + 0.25*rg + 0.25*rb)
-                r_bh50 = 0.50*rs + 0.25*rg + 0.25*rb
-                r_bh25 = 0.25*rs + 0.25*rg + 0.25*rb
-                r_stk  = rs if invest else 0.0
+                # 전략7 매도 상태 갱신
+                s = float(sig_dict.get(dt, 0))
+                if   s >= 2: s7_sell = True
+                elif s == 0: s7_sell = False
+                # s == 1 → 상태 유지
 
-                v["전략6"]   *= (1 + r_s6)
-                v["BH_max"]  *= (1 + r_bh50)
-                v["BH_min"]  *= (1 + r_bh25)
-                v["주식단독"] *= (1 + r_stk)
-                for col in vals:
-                    vals[col].append(v[col])
+                w6 = 0.50 if invest else 0.25
+                w7 = 0.0  if s7_sell else w6
+
+                v["전략6"]   *= (1 + w6*rs  + 0.25*rg + 0.25*rb)
+                v["전략7"]   *= (1 + w7*rs  + 0.25*rg + 0.25*rb)
+                v["BH_max"]  *= (1 + 0.50*rs + 0.25*rg + 0.25*rb)
+                v["BH_min"]  *= (1 + 0.25*rs + 0.25*rg + 0.25*rb)
+                v["주식단독"] *= (1 + (rs if invest else 0.0))
+                for c in cols: vals[c].append(v[c])
                 dates.append(dt)
 
-            return {col: pd.Series(vals[col], index=dates) for col in vals}
+            return {c: pd.Series(vals[c], index=dates) for c in cols}
 
-        def _perf_cards_html(key):
+        def _stats(s):
+            if s is None or s.empty: return 0.0, 0.0, 0.0
+            cum  = s.iloc[-1] - 100.0
+            n_yr = (s.index[-1] - s.index[0]).days / 365.25
+            cagr = ((s.iloc[-1]/100.0)**(1/n_yr) - 1)*100 if n_yr > 0 else 0.0
+            mdd  = ((s - s.cummax()) / s.cummax() * 100).min()
+            return cum, cagr, mdd
+
+        def _card_html(title, bg, border, cum, cagr, mdd, large=False):
+            cs = "+" if cum  >= 0 else ""
+            gs = "+" if cagr >= 0 else ""
+            cc = "#34d399" if cum  >= 0 else "#f87171"
+            gc = "#34d399" if cagr >= 0 else "#f87171"
+            cum_fs  = "32px" if large else "26px"
+            sub_fs  = "19px" if large else "16px"
+            pad     = "24px 28px" if large else "18px 20px"
+            return (
+                f'<div style="background:{bg};border:1.5px solid {border};'
+                f'border-radius:14px;padding:{pad};height:100%;">'
+                f'<div style="color:{border};font-size:{"13px" if large else "11px"};'
+                f'font-weight:800;letter-spacing:0.8px;margin-bottom:{"20px" if large else "14px"};">'
+                f'{title}</div>'
+                f'<div style="margin-bottom:{"16px" if large else "12px"};">'
+                f'<div style="color:#4b5563;font-size:10px;letter-spacing:0.5px;margin-bottom:4px;">누적수익률</div>'
+                f'<div style="color:{cc};font-size:{cum_fs};font-weight:900;line-height:1;letter-spacing:-0.5px;">'
+                f'{cs}{cum:.0f}%</div></div>'
+                f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;'
+                f'border-top:1px solid #1e2a3a;padding-top:{"16px" if large else "12px"};">'
+                f'<div><div style="color:#4b5563;font-size:10px;margin-bottom:4px;">CAGR</div>'
+                f'<div style="color:{gc};font-size:{sub_fs};font-weight:700;">{gs}{cagr:.1f}%</div></div>'
+                f'<div><div style="color:#4b5563;font-size:10px;margin-bottom:4px;">MDD</div>'
+                f'<div style="color:#f87171;font-size:{sub_fs};font-weight:700;">{mdd:.1f}%</div></div>'
+                f'</div></div>'
+            )
+
+        def _render_perf_tab(key):
             pf = _daily_pf_series(key)
             if not pf:
-                return "<div style='color:#6b7280;padding:20px;'>데이터 없음</div>"
+                st.warning("데이터 없음")
+                return
 
-            def _stats(s):
-                if s.empty:
-                    return 0.0, 0.0, 0.0
-                cum   = s.iloc[-1] - 100.0
-                n_yrs = (s.index[-1] - s.index[0]).days / 365.25
-                cagr  = ((s.iloc[-1] / 100.0) ** (1 / n_yrs) - 1) * 100 if n_yrs > 0 else 0.0
-                mdd   = ((s - s.cummax()) / s.cummax() * 100).min()
-                return cum, cagr, mdd
+            s7_cum, s7_cagr, s7_mdd = _stats(pf["전략7"])
+            s6_cum, s6_cagr, s6_mdd = _stats(pf["전략6"])
+            b5_cum, b5_cagr, b5_mdd = _stats(pf["BH_max"])
+            b2_cum, b2_cagr, b2_mdd = _stats(pf["BH_min"])
+            sk_cum, sk_cagr, sk_mdd = _stats(pf["주식단독"])
 
-            info = {
-                "⚙️ 전략6":      ("전략6",    "#071a10", "#16a34a"),
-                "📈 주식50% BH": ("BH_max",   "#0d0d20", "#6366f1"),
-                "📊 주식25% BH": ("BH_min",   "#111827", "#6b7280"),
-                "💹 주식단독":   ("주식단독",  "#1a1305", "#f59e0b"),
-            }
+            y0 = pf["전략7"].index[0].year
+            y1 = pf["전략7"].index[-1].year
 
-            period_txt = ""
-            s0 = pf["전략6"]
-            if not s0.empty:
-                y0 = s0.index[0].year
-                y1 = s0.index[-1].year
-                period_txt = f"백테스트 기간: {y0}~{y1}년 · 월별 포트폴리오 기준"
-
-            cards = ""
-            for title, (col, bg, border) in info.items():
-                cum, cagr, mdd = _stats(pf[col])
-                cs = "+" if cum  >= 0 else ""
-                gs = "+" if cagr >= 0 else ""
-                cc = "#34d399" if cum  >= 0 else "#f87171"
-                gc = "#34d399" if cagr >= 0 else "#f87171"
-                cards += (
-                    f'<div style="background:{bg};border:1.5px solid {border};'
-                    f'border-radius:14px;padding:20px 22px;">'
-                    # 타이틀
-                    f'<div style="color:{border};font-size:11px;font-weight:800;'
-                    f'letter-spacing:0.8px;margin-bottom:18px;">{title}</div>'
-                    # 누적수익률 (크게)
-                    f'<div style="margin-bottom:14px;">'
-                    f'<div style="color:#4b5563;font-size:10px;letter-spacing:0.5px;'
-                    f'margin-bottom:4px;">누적수익률</div>'
-                    f'<div style="color:{cc};font-size:28px;font-weight:900;'
-                    f'line-height:1;letter-spacing:-0.5px;">{cs}{cum:.0f}%</div>'
-                    f'</div>'
-                    # CAGR / MDD 나란히
-                    f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;'
-                    f'border-top:1px solid #1e2a3a;padding-top:14px;">'
-                    # CAGR
-                    f'<div>'
-                    f'<div style="color:#4b5563;font-size:10px;letter-spacing:0.5px;'
-                    f'margin-bottom:4px;">CAGR</div>'
-                    f'<div style="color:{gc};font-size:18px;font-weight:700;">{gs}{cagr:.1f}%</div>'
-                    f'</div>'
-                    # MDD
-                    f'<div>'
-                    f'<div style="color:#4b5563;font-size:10px;letter-spacing:0.5px;'
-                    f'margin-bottom:4px;">MDD</div>'
-                    f'<div style="color:#f87171;font-size:18px;font-weight:700;">{mdd:.1f}%</div>'
-                    f'</div>'
-                    f'</div>'
-                    f'</div>'
-                )
-
-            return (
-                f'<div style="display:grid;grid-template-columns:repeat(4,1fr);'
-                f'gap:14px;margin-bottom:6px;">{cards}</div>'
-                f'<div style="color:#374151;font-size:10px;margin-bottom:4px;">'
-                f'📌 {period_txt} · MDD는 일별 포트폴리오 종가 기준</div>'
+            # ── 전략7 히어로 카드 ──
+            hero = _card_html("⚡ 전략7  (전략6 + 매도신호≥2 시 주식0%)",
+                               "#0d0f1a", "#a78bfa", s7_cum, s7_cagr, s7_mdd, large=True)
+            # ── 비교 카드 4개 ──
+            cmp = (
+                _card_html("⚙️ 전략6",      "#071a10", "#16a34a", s6_cum, s6_cagr, s6_mdd)
+              + _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", b5_cum, b5_cagr, b5_mdd)
+              + _card_html("📊 주식25% BH", "#111827", "#6b7280", b2_cum, b2_cagr, b2_mdd)
+              + _card_html("💹 주식단독",   "#1a1305", "#f59e0b", sk_cum, sk_cagr, sk_mdd)
             )
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;margin-bottom:4px;">'
+                f'  {hero}'
+                f'  <div style="display:grid;grid-template-columns:repeat(2,1fr);'
+                f'       grid-template-rows:repeat(2,1fr);gap:10px;">{cmp}</div>'
+                f'</div>'
+                f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
+                f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준 · '
+                f'전략7 조건: 5개 신호 중 2개 이상 동시 점등 시 주식 0%, 신호 0개 시 전략6으로 복귀</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── 전략7 vs 전략6 비교 차트 ──
+            fig_c = go.Figure()
+            chart_cfg = [
+                ("전략7", "⚡ 전략7", "#a78bfa", 2.5),
+                ("전략6", "⚙️ 전략6", "#34d399", 1.5),
+                ("BH_max","📈 주식50%BH", "#6366f1", 1.0),
+                ("BH_min","📊 주식25%BH", "#6b7280", 1.0),
+            ]
+            for col, name, color, width in chart_cfg:
+                s = pf[col].resample("W").last()  # 주별 샘플링
+                fig_c.add_trace(go.Scatter(
+                    x=s.index, y=s.values, name=name, mode="lines",
+                    line=dict(color=color, width=width),
+                    hovertemplate=f"<b>{name}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:.1f}}<extra></extra>",
+                ))
+            fig_c.update_layout(
+                template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                height=380, margin=dict(l=0, r=0, t=40, b=0),
+                title=dict(text="전략7 vs 전략6 누적 성과 비교 (시작=100)", font=dict(size=13, color="#f1f5f9")),
+                legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
+                xaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10, color="#9ca3af")),
+                yaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10)),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_c, use_container_width=True)
 
         ptab_s, ptab_n, ptab_k, ptab_d, ptab_kq = st.tabs(
             ["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"]
@@ -917,7 +965,7 @@ def main():
             (ptab_d,"dow"),(ptab_kq,"kosdaq")
         ]:
             with ptab:
-                st.markdown(_perf_cards_html(pkey), unsafe_allow_html=True)
+                _render_perf_tab(pkey)
 
         # ── 6. 과거 데이터 테이블 ──
         st.markdown('<div class="section-title">🗂️ 과거 데이터 테이블</div>', unsafe_allow_html=True)
