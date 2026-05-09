@@ -1703,8 +1703,8 @@ def main():
                         result.append((dt, float(px2[dt]), hover))
                 return result
 
-            sell_markers = _make_markers("bull", 2)   # 상승장 + 신호≥2 → 매도
-            buy_markers  = _make_markers("bear", 4)   # 하락장 + 신호≥4 → 매수
+            sell_markers = _make_markers("bear", 2)   # 하락장 초입(고점 근처) + 신호≥2 → 매도
+            buy_markers  = _make_markers("bear", 4)   # 하락장 깊은 곳(저점 근처) + 신호≥4 → 매수
 
             st.markdown(
                 '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
