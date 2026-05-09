@@ -119,7 +119,6 @@ def load_raw():
     _ticker_map = {
         "sp500":  ("^GSPC",     "1985-01-01", "SP500"),
         "nasdaq": ("^IXIC",     "1985-01-01", "NASDAQ"),
-        "kospi":  ("^KS11",     "1985-01-01", "KOSPI"),
         "dow":    ("^DJI",      "1985-01-01", "DOW"),
         "kosdaq": ("^KQ11",     "1997-01-01", "KOSDAQ"),
         "gold":   ("GC=F",      "2000-01-01", "GOLD"),
@@ -135,13 +134,43 @@ def load_raw():
                 df.columns = df.columns.get_level_values(0)
             if "Close" not in df.columns or df.empty:
                 raise ValueError("no data")
-            return df["Close"].dropna(), False          # (data, is_offline)
+            return df["Close"].dropna(), False
         except Exception:
-            return _load_csv_fallback(csv_name), True   # 오프라인 폴백
+            return _load_csv_fallback(csv_name), True
+
+    def load_kospi():
+        """kospi_history.csv(1980~) + yfinance 최신 데이터 병합"""
+        hist_path = pathlib.Path(__file__).parent / "kospi_history.csv"
+        try:
+            hist = pd.read_csv(hist_path, index_col=0, parse_dates=True)
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            s_hist = hist["Close"].dropna().sort_index()
+            # yfinance로 최신 데이터 보완
+            last_date = s_hist.index[-1]
+            yf_start  = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            try:
+                yf_df = yf.download("^KS11", start=yf_start, auto_adjust=True,
+                                    progress=False, multi_level_index=False)
+                if isinstance(yf_df.columns, pd.MultiIndex):
+                    yf_df.columns = yf_df.columns.get_level_values(0)
+                if not yf_df.empty and "Close" in yf_df.columns:
+                    s_yf = yf_df["Close"].dropna()
+                    s_yf.index = pd.to_datetime(s_yf.index).tz_localize(None)
+                    combined = pd.concat([s_hist, s_yf])
+                    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+                    return combined, False
+            except Exception:
+                pass
+            return s_hist, False
+        except Exception:
+            # kospi_history.csv 없으면 yfinance 폴백
+            s, offline = dl("^KS11", "1985-01-01", "KOSPI")
+            return s, offline
 
     results, offline_flags = {}, {}
     for key, (ticker, start, csv_name) in _ticker_map.items():
         results[key], offline_flags[key] = dl(ticker, start, csv_name)
+    results["kospi"], offline_flags["kospi"] = load_kospi()
 
     # 오프라인 여부를 session_state에 기록 (UI 배너용)
     is_offline = any(offline_flags.values())
