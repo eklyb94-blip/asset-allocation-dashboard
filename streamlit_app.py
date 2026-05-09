@@ -1677,42 +1677,43 @@ def main():
                 dca_periods.append((st_d, px2.index[-1]))
 
             # ── 가격 + 음영 차트 ──
-            # 하락장별 DCA 첫 진입 시점 계산 (신호 상세 포함)
+            # 매도 신호: 상승장에서 신호 ≥2  /  매수 신호: 하락장에서 신호 ≥4
             vol_label = "실현변동성≥35%" if key in ("kospi", "kosdaq") else "VIX≥40"
-            dca_markers = {2: [], 4: []}
-            for _, brow in cycles_df[cycles_df["_type"] == "bear"].iterrows():
-                m = (sig_count.index >= brow["_start"]) & (sig_count.index <= brow["_end"])
-                p_sig = sig_count[m]
-                for thr in [2, 4]:
+
+            def _make_markers(cycle_type, thr):
+                result = []
+                for _, brow in cycles_df[cycles_df["_type"] == cycle_type].iterrows():
+                    m = (sig_count.index >= brow["_start"]) & (sig_count.index <= brow["_end"])
+                    p_sig = sig_count[m]
                     crossed = p_sig[p_sig >= thr]
                     if len(crossed) > 0:
                         dt = crossed.index[0]
-                        # 각 신호 ON/OFF
                         sig_details = [
-                            ("낙폭 ≤ -30%",    bool(drawdown.get(dt, 0)  <= -30)),
-                            ("RSI ≤ 30",       bool(rsi_s.get(dt, 100)   <= 30)),
-                            ("MA200 ≤ -15%",   bool(ma_gap.get(dt, 0)    <= -15)),
-                            ("BB %B ≤ 0",      bool(bb_pct.get(dt, 100)  <= 0)),
-                            (vol_label,        bool(s_vol.get(dt, 0)     >= 1)),
+                            ("낙폭 ≤ -30%",  bool(drawdown.get(dt, 0)  <= -30)),
+                            ("RSI ≤ 30",     bool(rsi_s.get(dt, 100)   <= 30)),
+                            ("MA200 ≤ -15%", bool(ma_gap.get(dt, 0)    <= -15)),
+                            ("BB %B ≤ 0",    bool(bb_pct.get(dt, 100)  <= 0)),
+                            (vol_label,      bool(s_vol.get(dt, 0)     >= 1)),
                         ]
                         n_on = sum(v for _, v in sig_details)
                         hover = (
                             f"신호 {n_on}/5개 점등<br>"
-                            + "<br>".join(
-                                f"{'✅' if v else '❌'} {name}"
-                                for name, v in sig_details
-                            )
+                            + "<br>".join(f"{'✅' if v else '❌'} {name}" for name, v in sig_details)
                         )
-                        dca_markers[thr].append((dt, float(px2[dt]), hover))
+                        result.append((dt, float(px2[dt]), hover))
+                return result
+
+            sell_markers = _make_markers("bull", 2)   # 상승장 + 신호≥2 → 매도
+            buy_markers  = _make_markers("bear", 4)   # 하락장 + 신호≥4 → 매수
 
             st.markdown(
                 '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
                 'border-bottom:1px solid #1e2a3a;padding-bottom:6px;margin:24px 0 12px;">'
-                '📈 시장 사이클 + 분할매수 진입 시점'
+                '📈 시장 사이클 + 매매 신호'
                 '  <span style="color:#34d399;font-size:11px;">■ 상승장</span>'
                 '  <span style="color:#f87171;font-size:11px;">■ 하락장</span>'
-                '  <span style="color:#fbbf24;font-size:11px;">▲ 1차(신호2)</span>'
-                '  <span style="color:#f87171;font-size:11px;">▲ 2차(신호4)</span></div>',
+                '  <span style="color:#f87171;font-size:11px;">▼ 매도(신호≥2)</span>'
+                '  <span style="color:#34d399;font-size:11px;">▲ 매수(신호≥4)</span></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1734,33 +1735,47 @@ def main():
                 showlegend=False,
             ))
 
-            # 분할매수 진입 마커
-            marker_cfg = [
-                (2, "#fbbf24", "▲ 1차 진입 (신호 2개)"),
-                (4, "#f87171", "▲ 2차 진입 (신호 4개)"),
-            ]
-            for thr, color, label in marker_cfg:
-                pts = dca_markers[thr]
-                if pts:
-                    xs      = [p[0] for p in pts]
-                    ys      = [p[1] for p in pts]
-                    hovers  = [p[2] for p in pts]
-                    fig.add_trace(go.Scatter(
-                        x=xs, y=ys,
-                        mode="markers",
-                        marker=dict(symbol="triangle-up", color=color,
-                                    size=14, line=dict(color="#0a0e1a", width=1)),
-                        name=label,
-                        customdata=hovers,
-                        hovertemplate=(
-                            f"<b>{label}</b><br>"
-                            "%{x|%Y-%m-%d}<br>"
-                            "가격: %{y:,.2f}<br>"
-                            "─────────────<br>"
-                            "%{customdata}"
-                            "<extra></extra>"
-                        ),
-                    ))
+            # 매도 마커 (▼ 빨간, 상승장 + 신호≥2)
+            if sell_markers:
+                sell_label = "▼ 매도 신호 (신호≥2)"
+                fig.add_trace(go.Scatter(
+                    x=[p[0] for p in sell_markers],
+                    y=[p[1] for p in sell_markers],
+                    mode="markers",
+                    marker=dict(symbol="triangle-down", color="#f87171",
+                                size=14, line=dict(color="#0a0e1a", width=1)),
+                    name=sell_label,
+                    customdata=[p[2] for p in sell_markers],
+                    hovertemplate=(
+                        f"<b>{sell_label}</b><br>"
+                        "%{x|%Y-%m-%d}<br>"
+                        "가격: %{y:,.2f}<br>"
+                        "─────────────<br>"
+                        "%{customdata}"
+                        "<extra></extra>"
+                    ),
+                ))
+
+            # 매수 마커 (▲ 초록, 하락장 + 신호≥4)
+            if buy_markers:
+                buy_label = "▲ 매수 신호 (신호≥4)"
+                fig.add_trace(go.Scatter(
+                    x=[p[0] for p in buy_markers],
+                    y=[p[1] for p in buy_markers],
+                    mode="markers",
+                    marker=dict(symbol="triangle-up", color="#34d399",
+                                size=14, line=dict(color="#0a0e1a", width=1)),
+                    name=buy_label,
+                    customdata=[p[2] for p in buy_markers],
+                    hovertemplate=(
+                        f"<b>{buy_label}</b><br>"
+                        "%{x|%Y-%m-%d}<br>"
+                        "가격: %{y:,.2f}<br>"
+                        "─────────────<br>"
+                        "%{customdata}"
+                        "<extra></extra>"
+                    ),
+                ))
 
             fig.update_layout(
                 template="plotly_dark",
@@ -1821,12 +1836,12 @@ def main():
             ))
 
             # 기준선
-            fig2.add_hline(y=2, line_dash="dot", line_color="#fbbf24", line_width=1.5,
-                           annotation_text="1차 진입 기준", annotation_position="right",
-                           annotation_font=dict(color="#fbbf24", size=10))
-            fig2.add_hline(y=4, line_dash="dot", line_color="#f87171", line_width=1.5,
-                           annotation_text="3차 진입 기준", annotation_position="right",
+            fig2.add_hline(y=2, line_dash="dot", line_color="#f87171", line_width=1.5,
+                           annotation_text="매도 신호 기준", annotation_position="right",
                            annotation_font=dict(color="#f87171", size=10))
+            fig2.add_hline(y=4, line_dash="dot", line_color="#34d399", line_width=1.5,
+                           annotation_text="매수 신호 기준", annotation_position="right",
+                           annotation_font=dict(color="#34d399", size=10))
 
             fig2.update_layout(
                 template="plotly_dark",
