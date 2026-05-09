@@ -579,6 +579,38 @@ def main():
     season, sig_year, digit, season_start = current_season_info()
     season_kr     = "11월~4월 시즌" if season == "Nov-Apr" else "5월~10월 시즌"
 
+    # ── 현재 신호 상태 (전략7) ──
+    def _cur_sig_state(key):
+        """현재 전략7 매도 신호 상태: (sell_active, current_count)"""
+        try:
+            px = raw[key].copy()
+            px.index = pd.to_datetime(px.index).tz_localize(None)
+            dd_s  = (px - px.cummax()) / px.cummax() * 100
+            dlt   = px.diff()
+            gain  = dlt.clip(lower=0).rolling(14).mean()
+            loss  = (-dlt.clip(upper=0)).rolling(14).mean()
+            rsi_s = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
+            ma200 = px.rolling(200).mean()
+            ma_g  = (px - ma200) / ma200 * 100
+            ma20  = px.rolling(20).mean(); std20 = px.rolling(20).std()
+            bb_rng = (ma20 + 2*std20) - (ma20 - 2*std20)
+            bb_p  = (px - (ma20 - 2*std20)) / bb_rng.replace(0, np.nan) * 100
+            if key in ("kospi", "kosdaq"):
+                s_vol = (px.pct_change().rolling(20).std() * (252**0.5) * 100 >= 35).astype(int)
+            else:
+                vix_h = load_vix_history()
+                vix_h.index = pd.to_datetime(vix_h.index).tz_localize(None)
+                s_vol = (vix_h.reindex(px.index, method="ffill").fillna(20) >= 40).astype(int)
+            sig = ((dd_s<=-30).astype(int)+(rsi_s<=30).astype(int)+
+                   (ma_g<=-15).astype(int)+(bb_p<=0).astype(int)+s_vol).fillna(0)
+            # 마지막 sell/normal 이벤트 비교로 현재 상태 결정
+            s_ge2 = sig[sig >= 2]; s_eq0 = sig[sig == 0]
+            last_sell = s_ge2.index[-1] if not s_ge2.empty else pd.Timestamp.min
+            last_norm = s_eq0.index[-1] if not s_eq0.empty else pd.Timestamp.min
+            return bool(last_sell > last_norm), int(sig.iloc[-1])
+        except Exception:
+            return False, 0
+
     # ── 현재 시즌 수익률 ──
     cur = {}
     for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq"]:
@@ -586,12 +618,14 @@ def main():
         rg = season_return(raw["gold"], season_start)
         rb = season_return(raw["krbond"], season_start) if key in ("kospi", "kosdaq") \
              else season_return_bond(raw["us30y"], season_start)
-        inv = digit in (strategies[key]["inv_na"] if season == "Nov-Apr"
-                        else strategies[key]["inv_mo"])
-        rp = (0.50*rs + 0.25*rg + 0.25*rb) if (inv and all(v is not None for v in [rs,rg,rb])) \
-             else (0.25*rs + 0.25*rg + 0.25*rb) if all(v is not None for v in [rs,rg,rb]) \
-             else None
-        cur[key] = {"stock": rs, "gold": rg, "bond": rb, "port": rp, "invest": inv}
+        inv  = digit in (strategies[key]["inv_na"] if season == "Nov-Apr"
+                         else strategies[key]["inv_mo"])
+        sell, sig_cnt = _cur_sig_state(key)
+        # 전략7 주식 비중
+        w7 = 0.0 if sell else (0.50 if inv else 0.25)
+        rp = (w7*rs + 0.25*rg + 0.25*rb) if all(v is not None for v in [rs, rg, rb]) else None
+        cur[key] = {"stock": rs, "gold": rg, "bond": rb, "port": rp,
+                    "invest": inv, "sell": sell, "sig_cnt": sig_cnt, "w7": w7}
 
     meta = {
         "sp500":  {"name": "S&P500", "emoji": "🇺🇸", "bond": "미국채30년", "color": "#5b9bd5"},
@@ -655,33 +689,63 @@ def main():
             with col:
                 m       = meta[key]
                 inv     = cur[key]["invest"]
+                sell    = cur[key]["sell"]
+                sig_cnt = cur[key]["sig_cnt"]
+                w7      = cur[key]["w7"]
                 rp      = cur[key]["port"]
-                stk_pct = 50 if inv else 25
-                card    = "invest-card" if inv else "cash-card"
-                icon    = "✅" if inv else "💤"
-                status  = "투자 시즌" if inv else "현금 보유"
-                sc      = "#34d399" if inv else "#fb923c"
+                stk_pct = int(w7 * 100)
 
-                stk_bg  = "#065f46" if inv else "#374151"
-                stk_clr = "#34d399" if inv else "#9ca3af"
+                # 상태별 스타일
+                if sell:
+                    card_bg     = "linear-gradient(160deg,#1f0808 0%,#120404 100%)"
+                    card_border = "#dc2626"
+                    icon        = "🔴"
+                    status      = f"매도 신호 ({sig_cnt}/5)"
+                    sc          = "#f87171"
+                elif inv:
+                    card_bg     = "linear-gradient(160deg,#0d2b1a 0%,#071a10 100%)"
+                    card_border = "#16a34a"
+                    icon        = "✅"
+                    status      = "투자 시즌"
+                    sc          = "#34d399"
+                else:
+                    card_bg     = "linear-gradient(160deg,#1c1208 0%,#120d05 100%)"
+                    card_border = "#92400e"
+                    icon        = "💤"
+                    status      = "현금 시즌"
+                    sc          = "#fb923c"
+
+                # 비중 뱃지
+                stk_bg  = "#7f1d1d" if sell else ("#065f46" if inv else "#374151")
+                stk_clr = "#fca5a5" if sell else ("#34d399" if inv else "#9ca3af")
                 badge_stk  = f'<span style="background:{stk_bg};color:{stk_clr};border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">주식&nbsp;{stk_pct}%</span>'
-                badge_cash = '' if inv else '<span style="background:#374151;color:#9ca3af;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">현금&nbsp;25%</span>'
+                cash_pct   = 100 - stk_pct - 50  # 금25+채권25=50
+                badge_cash = f'<span style="background:#374151;color:#9ca3af;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">현금&nbsp;{cash_pct}%</span>' \
+                             if cash_pct > 0 else ''
                 badge_gold = f'<span style="background:#78350f;color:#fbbf24;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">금&nbsp;25%</span>'
                 badge_bond = f'<span style="background:#1e3a5f;color:#93c5fd;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">{m["bond"]}&nbsp;25%</span>'
-                badges = f'{badge_stk} {badge_cash} {badge_gold} {badge_bond}'
+                badges     = f'{badge_stk} {badge_cash} {badge_gold} {badge_bond}'
+
+                # 매도 신호 시 신호 상세 표시
+                sell_note = (
+                    f'<div style="color:#f87171;font-size:10px;margin-bottom:10px;'
+                    f'background:#2d0a0a;border-radius:6px;padding:5px 8px;">'
+                    f'⚡ 전략7 매도 신호 활성 — 주식 비중 0%</div>'
+                ) if sell else ''
 
                 port_color = clr(rp)
                 port_val   = fp(rp)
                 st.markdown(
-                    f'<div class="{card}">'
+                    f'<div style="background:{card_bg};border:1.5px solid {card_border};border-radius:14px;padding:20px;">'
                     f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">'
                     f'<div><div style="color:#cbd5e1;font-size:16px;font-weight:700;letter-spacing:1px;">{m["emoji"]} {m["name"]}</div>'
                     f'<div style="color:#f1f5f9;font-size:24px;font-weight:800;margin-top:2px;">주식 {stk_pct}%</div></div>'
                     f'<div style="text-align:right;"><div style="color:{sc};font-size:13px;font-weight:700;">{icon} {status}</div>'
                     f'<div style="color:#6b7280;font-size:11px;margin-top:2px;">끝자리 {digit}</div></div></div>'
+                    f'{sell_note}'
                     f'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px;">{badges}</div>'
                     f'<div style="border-top:1px solid #1e2a3a;padding-top:12px;">'
-                    f'<div style="color:#6b7280;font-size:11px;margin-bottom:4px;">이번 시즌 포트폴리오 수익률</div>'
+                    f'<div style="color:#6b7280;font-size:11px;margin-bottom:4px;">이번 시즌 포트폴리오 수익률 (전략7)</div>'
                     f'<div style="color:{port_color};font-size:26px;font-weight:800;">{port_val}</div>'
                     f'</div></div>',
                     unsafe_allow_html=True,
