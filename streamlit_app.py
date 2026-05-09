@@ -1551,7 +1551,8 @@ def main():
                 dca_periods.append((st_d, px2.index[-1]))
 
             # ── 가격 + 음영 차트 ──
-            # 하락장별 DCA 첫 진입 시점 계산
+            # 하락장별 DCA 첫 진입 시점 계산 (신호 상세 포함)
+            vol_label = "실현변동성≥35%" if key in ("kospi", "kosdaq") else "VIX≥40"
             dca_markers = {2: [], 4: []}
             for _, brow in cycles_df[cycles_df["_type"] == "bear"].iterrows():
                 m = (sig_count.index >= brow["_start"]) & (sig_count.index <= brow["_end"])
@@ -1560,7 +1561,23 @@ def main():
                     crossed = p_sig[p_sig >= thr]
                     if len(crossed) > 0:
                         dt = crossed.index[0]
-                        dca_markers[thr].append((dt, float(px2[dt])))
+                        # 각 신호 ON/OFF
+                        sig_details = [
+                            ("낙폭 ≤ -30%",    bool(drawdown.get(dt, 0)  <= -30)),
+                            ("RSI ≤ 30",       bool(rsi_s.get(dt, 100)   <= 30)),
+                            ("MA200 ≤ -15%",   bool(ma_gap.get(dt, 0)    <= -15)),
+                            ("BB %B ≤ 0",      bool(bb_pct.get(dt, 100)  <= 0)),
+                            (vol_label,        bool(s_vol.get(dt, 0)     >= 1)),
+                        ]
+                        n_on = sum(v for _, v in sig_details)
+                        hover = (
+                            f"신호 {n_on}/5개 점등<br>"
+                            + "<br>".join(
+                                f"{'✅' if v else '❌'} {name}"
+                                for name, v in sig_details
+                            )
+                        )
+                        dca_markers[thr].append((dt, float(px2[dt]), hover))
 
             st.markdown(
                 '<div style="color:#5b9bd5;font-size:13px;font-weight:700;'
@@ -1599,14 +1616,24 @@ def main():
             for thr, color, label in marker_cfg:
                 pts = dca_markers[thr]
                 if pts:
-                    xs, ys = zip(*pts)
+                    xs      = [p[0] for p in pts]
+                    ys      = [p[1] for p in pts]
+                    hovers  = [p[2] for p in pts]
                     fig.add_trace(go.Scatter(
-                        x=list(xs), y=list(ys),
+                        x=xs, y=ys,
                         mode="markers",
                         marker=dict(symbol="triangle-up", color=color,
                                     size=14, line=dict(color="#0a0e1a", width=1)),
                         name=label,
-                        hovertemplate=f"<b>{label}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:,.2f}}<extra></extra>",
+                        customdata=hovers,
+                        hovertemplate=(
+                            f"<b>{label}</b><br>"
+                            "%{x|%Y-%m-%d}<br>"
+                            "가격: %{y:,.2f}<br>"
+                            "─────────────<br>"
+                            "%{customdata}"
+                            "<extra></extra>"
+                        ),
                     ))
 
             fig.update_layout(
