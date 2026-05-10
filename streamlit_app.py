@@ -784,10 +784,10 @@ def main():
         # ── 4. 누적 성과 차트 ──
         st.markdown('<div class="section-title">📊 누적 성과 차트</div>', unsafe_allow_html=True)
 
-        def _s7_series_for_chart(key):
-            """전략7 일별 포트폴리오 → 주별 리샘플 (차트용)"""
+        def _chart_series(key):
+            """전략7 / 비교군 전체를 일별 계산 → 주별 리샘플해서 반환"""
             sim = sims.get(key, pd.DataFrame())
-            if sim.empty: return pd.Series(dtype=float)
+            if sim.empty: return {}
             bond_key = "krbond" if key in ("kospi","kosdaq") else "us30y"
             d_stk = raw[key].pct_change().dropna()
             d_gld = raw["gold"].pct_change().dropna()
@@ -812,7 +812,8 @@ def main():
             sig=((dd<=-30).astype(int)+(rsi<=30).astype(int)+
                  (mag<=-15).astype(int)+(bbp<=0).astype(int)+sv).fillna(0).to_dict()
             im={(int(r["연도"]),r["시즌"]):bool(r["투자"]) for _,r in sim.iterrows()}
-            v=100.0; vals=[]; dates=[]; sell=False
+            cols=["전략7","BH_max","BH_min","주식단독"]
+            v={c:100.0 for c in cols}; vals={c:[] for c in cols}; dates=[]; sell=False
             gi=set(d_gld.index); bi=set(d_bnd.index)
             for dt in d_stk.index:
                 mo=dt.month
@@ -824,12 +825,17 @@ def main():
                 s=float(sig.get(dt,0))
                 if s>=2: sell=True
                 elif s==0: sell=False
-                w=0 if sell else (0.5 if inv else 0.25)
-                v*=(1+w*rs+0.25*rg+0.25*rb); vals.append(v); dates.append(dt)
-            return pd.Series(vals, index=dates).resample("W").last()
+                w7=0 if sell else (0.5 if inv else 0.25)
+                v["전략7"]   *= (1+w7*rs+0.25*rg+0.25*rb)
+                v["BH_max"]  *= (1+0.50*rs+0.25*rg+0.25*rb)
+                v["BH_min"]  *= (1+0.25*rs+0.25*rg+0.25*rb)
+                v["주식단독"] *= (1+(rs if inv else 0))
+                for c in cols: vals[c].append(v[c])
+                dates.append(dt)
+            return {c: pd.Series(vals[c], index=dates).resample("W").last() for c in cols}
 
-        def make_perf_chart(sim_df, title, accent, s7_series=None):
-            if sim_df.empty:
+        def make_perf_chart(chart_data, title, accent):
+            if not chart_data:
                 fig = go.Figure()
                 fig.update_layout(
                     template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
@@ -840,27 +846,20 @@ def main():
                 )
                 return fig
             fig = go.Figure()
-            # 전략7 (일별→주별)
-            if s7_series is not None and not s7_series.empty:
+            cfg = [
+                ("전략7",   "전략7 포트폴리오", accent,    3.0),
+                ("BH_max",  "주식50% BH",      "#6b7280", 1.5),
+                ("BH_min",  "주식25% BH",      "#4b5563", 1.5),
+                ("주식단독", "주식단독",         "#fbbf24", 1.5),
+            ]
+            for col, name, c, w in cfg:
+                s = chart_data.get(col)
+                if s is None or s.empty: continue
                 fig.add_trace(go.Scatter(
-                    x=s7_series.index, y=s7_series.values,
-                    name="전략7 포트폴리오", mode="lines",
-                    line=dict(color=accent, width=3),
-                    hovertemplate="<b>전략7</b><br>%{x|%Y-%m-%d}<br>%{y:.1f}<extra></extra>",
+                    x=s.index, y=s.values, name=name, mode="lines",
+                    line=dict(color=c, width=w),
+                    hovertemplate=f"<b>{name}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:.1f}}<extra></extra>",
                 ))
-            # 비교 전략 (반기별)
-            x = [f"{r['연도']}-{r['시즌'][:3]}" for _, r in sim_df.iterrows()]
-            for col, name, c, w in [
-                ("BH_max",  "주식50% BH", "#6b7280", 1.5),
-                ("BH_min",  "주식25% BH", "#4b5563", 1.5),
-                ("주식단독", "주식단독",   "#fbbf24", 1.5),
-            ]:
-                if col in sim_df.columns:
-                    fig.add_trace(go.Scatter(
-                        x=x, y=sim_df[col], name=name, mode="lines",
-                        line=dict(color=c, width=w),
-                        hovertemplate=f"<b>{name}</b><br>%{{x}}<br>%{{y:.1f}}<extra></extra>",
-                    ))
             fig.update_layout(
                 template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
                 title=dict(text=title, font=dict(size=14, color="#f1f5f9")),
@@ -877,10 +876,9 @@ def main():
             with tab:
                 m = meta[key]
                 st.plotly_chart(
-                    make_perf_chart(sims[key],
+                    make_perf_chart(_chart_series(key),
                                     f"{m['name']} 자산배분 포트폴리오 누적성과 (시작=100)",
-                                    m["color"],
-                                    s7_series=_s7_series_for_chart(key)),
+                                    m["color"]),
                     use_container_width=True,
                 )
 
