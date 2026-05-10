@@ -3122,21 +3122,57 @@ def main():
 
         def _style_crash_table(df):
             def _c(val):
-                col = df.columns[list(df.columns).index(df.columns[list(df.iloc[0]).index(val)])] if val in list(df.iloc[0]) else ""
                 if isinstance(val, float):
-                    if val >= 30: return "color:#16a34a;font-weight:700"
-                    if val >= 10: return "color:#34d399"
-                    if val >= 0:  return "color:#86efac"
+                    if val >= 30:  return "color:#16a34a;font-weight:700"
+                    if val >= 10:  return "color:#34d399"
+                    if val >= 0:   return "color:#86efac"
                     if val >= -20: return "color:#fbbf24"
                     return "color:#f87171;font-weight:700"
                 if isinstance(val, str):
                     if "초단기" in str(val): return "color:#f87171;font-weight:700"
-                    if "빠른"  in str(val): return "color:#fbbf24;font-weight:600"
-                    if "느린"  in str(val): return "color:#6b7280"
+                    if "빠른"   in str(val): return "color:#fbbf24;font-weight:600"
+                    if "느린"   in str(val): return "color:#6b7280"
                 return "color:#d1d5db"
             return df.style.map(_c)
 
-        st.dataframe(_style_crash_table(_disp), use_container_width=True, height=480, hide_index=True)
+        def _tbl_summary(df_g):
+            r12 = df_g["12M(%)"].dropna()
+            r6  = df_g["6M(%)"].dropna()
+            if len(r12) == 0: return ""
+            return (
+                f'<div style="display:flex;gap:24px;margin-bottom:10px;'
+                f'background:#111827;border-radius:8px;padding:10px 16px;">'
+                f'<span style="color:#4b5563;font-size:11px;">{len(df_g)}건</span>'
+                f'<span style="color:#4b5563;font-size:11px;">|</span>'
+                f'<span style="color:#9ca3af;font-size:11px;">평균낙폭 '
+                f'<b style="color:#f87171;">{df_g["최대낙폭(%)"].mean():.1f}%</b></span>'
+                f'<span style="color:#4b5563;font-size:11px;">|</span>'
+                f'<span style="color:#9ca3af;font-size:11px;">평균기간 '
+                f'<b style="color:#e2e8f0;">{df_g["기간(일)"].mean():.0f}일</b></span>'
+                f'<span style="color:#4b5563;font-size:11px;">|</span>'
+                f'<span style="color:#9ca3af;font-size:11px;">12M 평균 '
+                f'<b style="color:#34d399;">{r12.mean():+.1f}%</b></span>'
+                f'<span style="color:#4b5563;font-size:11px;">|</span>'
+                f'<span style="color:#9ca3af;font-size:11px;">12M 양수확률 '
+                f'<b style="color:#34d399;">{(r12>0).mean()*100:.0f}%</b></span>'
+                f'</div>'
+            )
+
+        _ct1, _ct2, _ct3 = st.tabs([
+            f"🔴 초단기급락 (속도>0.40%/일)",
+            f"🟡 빠른하락 (0.20~0.40%/일)",
+            f"🔵 느린하락 (속도≤0.20%/일)",
+        ])
+        for _ctab, _label, _mask in [
+            (_ct1, "초단기급락", _disp["유형"] == "초단기급락"),
+            (_ct2, "빠른하락",   _disp["유형"] == "빠른하락"),
+            (_ct3, "느린하락",   _disp["유형"] == "느린하락"),
+        ]:
+            with _ctab:
+                _sub = _disp[_mask].reset_index(drop=True)
+                st.markdown(_tbl_summary(_sub), unsafe_allow_html=True)
+                st.dataframe(_style_crash_table(_sub), use_container_width=True,
+                             height=min(80 + len(_sub)*36, 520), hide_index=True)
 
         st.markdown(
             '<div class="footer-txt">낙폭속도 = 최대낙폭(%) ÷ 하락기간(일) · '
