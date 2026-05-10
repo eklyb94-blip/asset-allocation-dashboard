@@ -18,6 +18,12 @@ import pathlib
 warnings.filterwarnings("ignore")
 
 try:
+    import pandas_datareader.data as pdr
+    _PDR_OK = True
+except ImportError:
+    _PDR_OK = False
+
+try:
     import requests as _requests
     _REQUESTS_OK = True
 except ImportError:
@@ -120,7 +126,6 @@ def load_raw():
         "nasdaq": ("^IXIC",     "1985-01-01", "NASDAQ"),
         "dow":    ("^DJI",      "1985-01-01", "DOW"),
         "kosdaq": ("^KQ11",     "1997-01-01", "KOSDAQ"),
-        "us30y":  ("^TYX",      "1985-01-01", "US30Y"),
         "krbond": ("114820.KS", "2009-01-01", "KRBOND"),
     }
 
@@ -221,12 +226,43 @@ def load_raw():
         except Exception:
             return dl("GC=F", "2000-01-01", "GOLD")
 
+    def load_us30y():
+        """FRED DGS30(1977~) + yfinance ^TYX 최신 보완"""
+        if _PDR_OK:
+            try:
+                s = pdr.DataReader("DGS30", "fred",
+                                   start=date(1977, 1, 1))["DGS30"].dropna()
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+                s = s.sort_index()
+                # yfinance로 FRED 지연분 보완
+                last_date = s.index[-1]
+                yf_start  = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+                try:
+                    yf_df = yf.download("^TYX", start=yf_start, auto_adjust=True,
+                                        progress=False, multi_level_index=False)
+                    if isinstance(yf_df.columns, pd.MultiIndex):
+                        yf_df.columns = yf_df.columns.get_level_values(0)
+                    if not yf_df.empty and "Close" in yf_df.columns:
+                        s_yf = yf_df["Close"].dropna()
+                        s_yf.index = pd.to_datetime(s_yf.index).tz_localize(None)
+                        combined = pd.concat([s, s_yf])
+                        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+                        return combined, False
+                except Exception:
+                    pass
+                return s, False
+            except Exception:
+                pass
+        # FRED 실패 시 yfinance ^TYX 폴백 (1985~)
+        return dl("^TYX", "1985-01-01", "US30Y")
+
     results, offline_flags = {}, {}
     for key, (ticker, start, csv_name) in _ticker_map.items():
         results[key], offline_flags[key] = dl(ticker, start, csv_name)
-    results["kospi"], offline_flags["kospi"] = load_kospi()
-    results["sp500"], offline_flags["sp500"] = load_sp500()
-    results["gold"],  offline_flags["gold"]  = load_gold()
+    results["kospi"],  offline_flags["kospi"]  = load_kospi()
+    results["sp500"],  offline_flags["sp500"]  = load_sp500()
+    results["gold"],   offline_flags["gold"]   = load_gold()
+    results["us30y"],  offline_flags["us30y"]  = load_us30y()
 
     # 오프라인 여부를 session_state에 기록 (UI 배너용)
     is_offline = any(offline_flags.values())
