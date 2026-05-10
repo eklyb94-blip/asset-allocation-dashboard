@@ -59,6 +59,7 @@ history_csvs = [
     "dow_history.csv",
     "gold_history.csv",
     "kospi_history.csv",
+    "csi300_history.csv",
 ]
 log("\n📂 히스토리 CSV 복사")
 for fname in history_csvs:

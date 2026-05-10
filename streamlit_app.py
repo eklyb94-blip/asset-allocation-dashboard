@@ -233,6 +233,7 @@ def load_raw():
     results["gold"],   offline_flags["gold"]   = load_from_csv("gold_history.csv",   "GC=F",   "1970-01-01", "GOLD")
     results["nasdaq"], offline_flags["nasdaq"] = load_from_csv("nasdaq_history.csv", "^IXIC",  "1970-01-01", "NASDAQ")
     results["dow"],    offline_flags["dow"]    = load_from_csv("dow_history.csv",    "^DJI",   "1970-01-01", "DOW")
+    results["csi300"], offline_flags["csi300"] = load_from_csv("csi300_history.csv", "000300.SS", "2005-01-01", "CSI300")
     results["us30y"],  offline_flags["us30y"]  = load_us30y()
 
     # 오프라인 여부를 session_state에 기록 (UI 배너용)
@@ -346,6 +347,7 @@ def load_daily_ohlc():
         "sp500":  ("sp500_history.csv",  "^GSPC"),
         "nasdaq": ("nasdaq_history.csv", "^IXIC"),
         "dow":    ("dow_history.csv",    "^DJI"),
+        "csi300": ("csi300_history.csv", "000300.SS"),
     }
     for key, (csv_file, ticker) in csv_sources.items():
         s = from_csv(csv_file, ticker)
@@ -402,6 +404,7 @@ def compute_strategy():
         "kospi":  mr(raw["kospi"]),
         "dow":    mr(raw["dow"]),
         "kosdaq": mr(raw["kosdaq"]),
+        "csi300": mr(raw["csi300"]),
         "gold":   mr(raw["gold"]),
         "us30y":  mr_bond(raw["us30y"]),
         "krbond": mr(raw["krbond"]),
@@ -450,7 +453,7 @@ def compute_strategy():
         )
 
     strategies = {}
-    for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq"]:
+    for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]:
         na, mo = seas[key]
         inv_na, inv_mo, pna, pmo = digit_strategy(na, mo)
         strategies[key] = {
@@ -463,6 +466,7 @@ def compute_strategy():
     def simulate(stock_key):
         info = strategies[stock_key]
         bond_key = "krbond" if stock_key in ("kospi", "kosdaq") else "us30y"
+        # csi300: 중국 채권 데이터 없으므로 미국채10년 대용 (bond_key = "us30y" 유지)
         bond_na, bond_mo = seas[bond_key]
         gold_na, gold_mo = seas["gold"]
         na, mo = info["na"], info["mo"]
@@ -514,7 +518,7 @@ def compute_strategy():
             return pd.DataFrame(columns=_cols)
         return pd.DataFrame(records)
 
-    sims = {k: simulate(k) for k in ["sp500", "nasdaq", "kospi", "dow", "kosdaq"]}
+    sims = {k: simulate(k) for k in ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]}
     return raw, monthly, seas, strategies, sims
 
 
@@ -705,7 +709,7 @@ def main():
             ma20  = px.rolling(20).mean(); std20 = px.rolling(20).std()
             bb_rng = (ma20 + 2*std20) - (ma20 - 2*std20)
             bb_p  = (px - (ma20 - 2*std20)) / bb_rng.replace(0, np.nan) * 100
-            if key in ("kospi", "kosdaq"):
+            if key in ("kospi", "kosdaq", "csi300"):
                 s_vol = (px.pct_change().rolling(20).std() * (252**0.5) * 100 >= 35).astype(int)
             else:
                 vix_h = load_vix_history()
@@ -723,7 +727,7 @@ def main():
 
     # ── 현재 시즌 수익률 ──
     cur = {}
-    for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq"]:
+    for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]:
         rs = season_return(raw[key],   season_start)
         rg = season_return(raw["gold"], season_start)
         rb = season_return(raw["krbond"], season_start) if key in ("kospi", "kosdaq") \
@@ -743,6 +747,7 @@ def main():
         "kospi":  {"name": "KOSPI",  "emoji": "🇰🇷", "bond": "한국채30년", "color": "#22c55e"},
         "dow":    {"name": "DOW",    "emoji": "🏛️",  "bond": "미국채10년", "color": "#f59e0b"},
         "kosdaq": {"name": "KOSDAQ", "emoji": "📱",  "bond": "한국채30년", "color": "#06b6d4"},
+        "csi300": {"name": "CSI300", "emoji": "🇨🇳", "bond": "미국채10년", "color": "#f97316"},
     }
 
     # ════════════════════════════════════════
@@ -794,8 +799,8 @@ def main():
         # ── 2. 현재 권장 자산배분 카드 ──
         st.markdown('<div class="section-title">🎯 현재 권장 자산배분 (전략7)</div>', unsafe_allow_html=True)
 
-        cols5 = st.columns(5)
-        for key, col in zip(["sp500", "nasdaq", "kospi", "dow", "kosdaq"], cols5):
+        cols5 = st.columns(6)
+        for key, col in zip(["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"], cols5):
             with col:
                 m       = meta[key]
                 inv     = cur[key]["invest"]
@@ -861,7 +866,7 @@ def main():
         # ── 3. 이번 시즌 자산별 수익률 ──
         st.markdown('<div class="section-title">📈 이번 시즌 자산별 수익률</div>', unsafe_allow_html=True)
 
-        for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq"]:
+        for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]:
             m = meta[key]
             c1, c2, c3, c4 = st.columns(4)
             items = [
@@ -914,7 +919,7 @@ def main():
             bbr=(ma20+2*s20)-(ma20-2*s20)
             bbp=(px-(ma20-2*s20))/bbr.replace(0,np.nan)*100
             dd=(px-px.cummax())/px.cummax()*100
-            if key in ("kospi","kosdaq"):
+            if key in ("kospi","kosdaq","csi300"):
                 sv=(px.pct_change().rolling(20).std()*(252**0.5)*100>=35).astype(int)
             else:
                 vh=load_vix_history(); vh.index=pd.to_datetime(vh.index).tz_localize(None)
@@ -981,8 +986,8 @@ def main():
             )
             return fig
 
-        tab_s, tab_n, tab_k, tab_d, tab_kq = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"])
-        for tab, key in [(tab_s,"sp500"), (tab_n,"nasdaq"), (tab_k,"kospi"), (tab_d,"dow"), (tab_kq,"kosdaq")]:
+        tab_s, tab_n, tab_k, tab_d, tab_kq, tab_cn = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"])
+        for tab, key in [(tab_s,"sp500"), (tab_n,"nasdaq"), (tab_k,"kospi"), (tab_d,"dow"), (tab_kq,"kosdaq"), (tab_cn,"csi300")]:
             with tab:
                 m = meta[key]
                 st.plotly_chart(
@@ -1027,7 +1032,7 @@ def main():
             bb_rng = (ma20 + 2*std20) - (ma20 - 2*std20)
             bb_p   = (px - (ma20 - 2*std20)) / bb_rng.replace(0, np.nan) * 100
 
-            if key in ("kospi", "kosdaq"):
+            if key in ("kospi", "kosdaq", "csi300"):
                 s_vol = (px.pct_change().rolling(20).std() * (252**0.5) * 100 >= 35).astype(int)
             else:
                 vix_h = load_vix_history()
@@ -1179,12 +1184,12 @@ def main():
             )
             st.plotly_chart(fig_c, use_container_width=True)
 
-        ptab_s, ptab_n, ptab_k, ptab_d, ptab_kq = st.tabs(
-            ["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"]
+        ptab_s, ptab_n, ptab_k, ptab_d, ptab_kq, ptab_cn = st.tabs(
+            ["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"]
         )
         for ptab, pkey in [
             (ptab_s,"sp500"),(ptab_n,"nasdaq"),(ptab_k,"kospi"),
-            (ptab_d,"dow"),(ptab_kq,"kosdaq")
+            (ptab_d,"dow"),(ptab_kq,"kosdaq"),(ptab_cn,"csi300")
         ]:
             with ptab:
                 _render_perf_tab(pkey)
@@ -1218,8 +1223,8 @@ def main():
                     return "color:#d1d5db"
                 return df.style.map(_c)
 
-            s_tab, n_tab, k_tab, d_tab, kq_tab = st.tabs(["S&P500", "NASDAQ", "KOSPI", "DOW", "KOSDAQ"])
-            for tab, key in [(s_tab,"sp500"), (n_tab,"nasdaq"), (k_tab,"kospi"), (d_tab,"dow"), (kq_tab,"kosdaq")]:
+            s_tab, n_tab, k_tab, d_tab, kq_tab, cn_tab = st.tabs(["S&P500", "NASDAQ", "KOSPI", "DOW", "KOSDAQ", "CSI300"])
+            for tab, key in [(s_tab,"sp500"), (n_tab,"nasdaq"), (k_tab,"kospi"), (d_tab,"dow"), (kq_tab,"kosdaq"), (cn_tab,"csi300")]:
                 with tab:
                     st.dataframe(style_sim(fmt_sim(sims[key])),
                                  use_container_width=True, height=480, hide_index=True)
@@ -1265,8 +1270,8 @@ def main():
                     return "color:#d1d5db"
                 return df.style.map(_c)
 
-            ds_tab, dn_tab, dk_tab, dd_tab, dkq_tab = st.tabs(["S&P500", "NASDAQ", "KOSPI", "DOW", "KOSDAQ"])
-            for tab, key in [(ds_tab,"sp500"), (dn_tab,"nasdaq"), (dk_tab,"kospi"), (dd_tab,"dow"), (dkq_tab,"kosdaq")]:
+            ds_tab, dn_tab, dk_tab, dd_tab, dkq_tab, dcn_tab = st.tabs(["S&P500", "NASDAQ", "KOSPI", "DOW", "KOSDAQ", "CSI300"])
+            for tab, key in [(ds_tab,"sp500"), (dn_tab,"nasdaq"), (dk_tab,"kospi"), (dd_tab,"dow"), (dkq_tab,"kosdaq"), (dcn_tab,"csi300")]:
                 with tab:
                     na_t, mo_t = st.tabs(["Nov-Apr (11~4월)", "May-Oct (5~10월)"])
                     with na_t:
@@ -1325,8 +1330,8 @@ def main():
             )
             return fig
 
-        hm_s, hm_n, hm_k, hm_d, hm_kq = st.tabs(["S&P500", "NASDAQ", "KOSPI", "DOW", "KOSDAQ"])
-        for tab, key in [(hm_s,"sp500"), (hm_n,"nasdaq"), (hm_k,"kospi"), (hm_d,"dow"), (hm_kq,"kosdaq")]:
+        hm_s, hm_n, hm_k, hm_d, hm_kq, hm_cn = st.tabs(["S&P500", "NASDAQ", "KOSPI", "DOW", "KOSDAQ", "CSI300"])
+        for tab, key in [(hm_s,"sp500"), (hm_n,"nasdaq"), (hm_k,"kospi"), (hm_d,"dow"), (hm_kq,"kosdaq"), (hm_cn,"csi300")]:
             with tab:
                 st.plotly_chart(make_heatmap(key), use_container_width=True)
 
@@ -1345,7 +1350,7 @@ def main():
         st.markdown('<div class="section-title">📉 역대 폭락일 TOP 30</div>', unsafe_allow_html=True)
         st.caption("전일 종가 대비 당일 종가 기준 하락률 상위 30일")
 
-        drop_s, drop_n, drop_k, drop_d, drop_kq = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"])
+        drop_s, drop_n, drop_k, drop_d, drop_kq, drop_cn = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"])
 
         CATEGORIES = [
             "⚔️ 지정학/전쟁",
@@ -1473,7 +1478,7 @@ def main():
                 hide_index=True,
             )
 
-        for tab, key in [(drop_s, "sp500"), (drop_n, "nasdaq"), (drop_k, "kospi"), (drop_d, "dow"), (drop_kq, "kosdaq")]:
+        for tab, key in [(drop_s, "sp500"), (drop_n, "nasdaq"), (drop_k, "kospi"), (drop_d, "dow"), (drop_kq, "kosdaq"), (drop_cn, "csi300")]:
             with tab:
                 render_drop_tab(key)
 
@@ -1484,7 +1489,7 @@ def main():
         st.markdown('<div class="section-title">🔍 폭락 후 전략</div>', unsafe_allow_html=True)
         st.caption("폭락일 이후 N일 뒤 진입 시 수익률을 분석합니다. 모든 날짜는 거래일(영업일) 기준입니다.")
 
-        sim_s, sim_n, sim_k, sim_d, sim_kq = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"])
+        sim_s, sim_n, sim_k, sim_d, sim_kq, sim_cn = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"])
 
         def render_sim_tab(key):
             c1, c2, c3 = st.columns([1, 2, 2])
@@ -1732,7 +1737,7 @@ def main():
 
             # ── 엑셀 다운로드 ──
             st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
-            fname_map = {"sp500": "SP500", "nasdaq": "NASDAQ", "kospi": "KOSPI", "dow": "DOW", "kosdaq": "KOSDAQ"}
+            fname_map = {"sp500": "SP500", "nasdaq": "NASDAQ", "kospi": "KOSPI", "dow": "DOW", "kosdaq": "KOSDAQ", "csi300": "CSI300"}
             fname = fname_map[key]
 
             buf = io.BytesIO()
@@ -1758,7 +1763,7 @@ def main():
                 key=f"dl_{key}",
             )
 
-        for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi"), (sim_d, "dow"), (sim_kq, "kosdaq")]:
+        for tab, key in [(sim_s, "sp500"), (sim_n, "nasdaq"), (sim_k, "kospi"), (sim_d, "dow"), (sim_kq, "kosdaq"), (sim_cn, "csi300")]:
             with tab:
                 render_sim_tab(key)
 
@@ -1769,7 +1774,7 @@ def main():
         st.markdown('<div class="section-title">📈 시장 사이클 분석</div>', unsafe_allow_html=True)
         st.caption("직전 고점 대비 -20% 이하 → 하락장 시작 / 직전 저점 대비 +20% 이상 → 상승장 시작 (월가 Bull/Bear Market 표준 정의)")
 
-        cyc_s, cyc_n, cyc_k, cyc_d, cyc_kq = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"])
+        cyc_s, cyc_n, cyc_k, cyc_d, cyc_kq, cyc_cn = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"])
 
         def detect_cycles(prices: pd.Series):
             if len(prices) < 10:
@@ -1910,7 +1915,7 @@ def main():
             bb_dn     = ma20 - 2 * std20
             bb_pct    = (px2 - bb_dn) / (bb_up - bb_dn) * 100
 
-            if key in ("kospi", "kosdaq"):
+            if key in ("kospi", "kosdaq", "csi300"):
                 vol   = px2.pct_change().rolling(20).std() * (252**0.5) * 100
                 s_vol = (vol >= 35).astype(int)
             else:
@@ -1948,7 +1953,7 @@ def main():
 
             # ── 가격 + 음영 차트 ──
             # 매도 신호: 상승장에서 신호 ≥2  /  매수 신호: 하락장에서 신호 ≥4
-            vol_label = "실현변동성≥35%" if key in ("kospi", "kosdaq") else "VIX≥40"
+            vol_label = "실현변동성≥35%" if key in ("kospi", "kosdaq", "csi300") else "VIX≥40"
 
             def _make_markers(cycle_type, thr):
                 result = []
@@ -2140,6 +2145,7 @@ def main():
 
             # ── 전략6 월별 포트폴리오 가치 계산 (사이클 기간 매핑용) ──
             bond_key  = "krbond" if key in ("kospi", "kosdaq") else "us30y"
+            # csi300: 중국 채권 데이터 없으므로 미국채10년 대용 (bond_key = "us30y" 유지)
             stk_m     = monthly[key]
             gold_m    = monthly["gold"]
             if bond_key == "us30y":
@@ -2215,7 +2221,7 @@ def main():
                 hide_index=True,
             )
 
-        for tab, key in [(cyc_s, "sp500"), (cyc_n, "nasdaq"), (cyc_k, "kospi"), (cyc_d, "dow"), (cyc_kq, "kosdaq")]:
+        for tab, key in [(cyc_s, "sp500"), (cyc_n, "nasdaq"), (cyc_k, "kospi"), (cyc_d, "dow"), (cyc_kq, "kosdaq"), (cyc_cn, "csi300")]:
             with tab:
                 render_cycle_tab(key)
 
@@ -2300,7 +2306,7 @@ def main():
             sp_per    = load_multpl("https://www.multpl.com/s-p-500-pe-ratio")
 
         # ── 섹션1: 지수별 요약 (클릭 선택) ──
-        tech_keys = ["sp500", "nasdaq", "kospi", "dow", "kosdaq"]
+        tech_keys = ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]
         tech_all  = {k: calc_tech(k) for k in tech_keys}
 
         def index_signals(key, extra_indicators):
@@ -2328,7 +2334,9 @@ def main():
         kospi_sigs  = index_signals("kospi",  [(kospi_rvol, 35, "above"), (fg_val, 25, "below")])
         kosdaq_rvol = tech_all["kosdaq"].get("rvol")
         kosdaq_sigs = index_signals("kosdaq", [(kosdaq_rvol, 35, "above"), (fg_val, 25, "below")])
-        sigs_map = {"sp500": sp500_sigs, "nasdaq": nasdaq_sigs, "kospi": kospi_sigs, "dow": dow_sigs, "kosdaq": kosdaq_sigs}
+        csi300_rvol = tech_all["csi300"].get("rvol")
+        csi300_sigs = index_signals("csi300", [(csi300_rvol, 35, "above"), (fg_val, 25, "below")])
+        sigs_map = {"sp500": sp500_sigs, "nasdaq": nasdaq_sigs, "kospi": kospi_sigs, "dow": dow_sigs, "kosdaq": kosdaq_sigs, "csi300": csi300_sigs}
 
         def summary_card_html(label, sigs, selected=False):
             n = sum(sigs)
@@ -2356,10 +2364,11 @@ def main():
             ("kospi",  "🇰🇷 KOSPI"),
             ("dow",    "🏛️ DOW"),
             ("kosdaq", "📱 KOSDAQ"),
+            ("csi300", "🇨🇳 CSI300"),
         ]
 
-        sc1, sc2, sc3, sc4, sc5 = st.columns(5)
-        for col, (key, label) in zip([sc1, sc2, sc3, sc4, sc5], idx_list):
+        sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
+        for col, (key, label) in zip([sc1, sc2, sc3, sc4, sc5, sc6], idx_list):
             with col:
                 selected = st.session_state["radar_sel"] == key
                 st.markdown(summary_card_html(label, sigs_map[key], selected), unsafe_allow_html=True)
@@ -2411,7 +2420,7 @@ def main():
         )
 
         if sel_key in ("sp500", "nasdaq", "dow"):
-            # S&P500 / NASDAQ / DOW: VIX, Fear&Greed, CAPE, S&P500 PER
+            # S&P500 / NASDAQ / DOW / CSI300: VIX, Fear&Greed, CAPE, S&P500 PER
             g1, g2, g3, g4 = st.columns(4)
             with g1:
                 st.markdown(ind_card(
@@ -2434,11 +2443,11 @@ def main():
                     15, "15 이하", "below", "S&P500 현재 주가수익비율"
                 ), unsafe_allow_html=True)
 
-        else:  # kospi / kosdaq
-            # KOSPI / KOSDAQ: 실현변동성(VKOSPI 대용), Fear&Greed, KOSPI PBR
+        else:  # kospi / kosdaq / csi300
+            # KOSPI / KOSDAQ / CSI300: 실현변동성, Fear&Greed, PBR
             rvol_val = tech_all[sel_key].get("rvol")
             g1, g2, g3 = st.columns(3)
-            _kr_name = "KOSDAQ" if sel_key == "kosdaq" else "KOSPI"
+            _kr_name = "KOSDAQ" if sel_key == "kosdaq" else ("CSI300" if sel_key == "csi300" else "KOSPI")
             with g1:
                 st.markdown(ind_card(
                     f"실현변동성 (V{_kr_name} 대용)", rvol_val, "pct",
@@ -2480,7 +2489,7 @@ def main():
             )
         with pc2:
             date_col1, date_col2 = st.columns(2)
-            _daily_min = date(1997, 1, 1) if sel_key == "kosdaq" else date(1985, 1, 1)
+            _daily_min = date(1997, 1, 1) if sel_key == "kosdaq" else (date(2005, 1, 4) if sel_key == "csi300" else date(1985, 1, 1))
             with date_col1:
                 custom_start = st.date_input(
                     "시작일 (직접 설정)",
@@ -2528,7 +2537,7 @@ def main():
             df["볼린저밴드%B"] = ((prices - bb_dn) / (bb_up - bb_dn) * 100).round(1)
 
             # VIX or 실현변동성
-            if key in ("kospi", "kosdaq"):
+            if key in ("kospi", "kosdaq", "csi300"):
                 df["실현변동성(%)"] = (prices.pct_change().rolling(20).std() * (252**0.5) * 100).round(1)
             else:
                 vix_h = load_vix_history()
@@ -2542,8 +2551,8 @@ def main():
         daily_df = calc_daily_df(sel_key)
 
         if not daily_df.empty:
-            vol_col = "실현변동성(%)" if sel_key in ("kospi", "kosdaq") else "VIX"
-            vol_thr = 35 if sel_key in ("kospi", "kosdaq") else 40
+            vol_col = "실현변동성(%)" if sel_key in ("kospi", "kosdaq", "csi300") else "VIX"
+            vol_thr = 35 if sel_key in ("kospi", "kosdaq", "csi300") else 40
             n_total_sigs = 5  # 낙폭, RSI, MA200, 볼린저, VIX/실현변동성
 
             # 날짜 범위 필터
@@ -2850,8 +2859,8 @@ def main():
             )
             st.markdown(html_tbl, unsafe_allow_html=True)
 
-        ann_s, ann_n, ann_k, ann_d, ann_kq = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ"])
-        for tab, key in [(ann_s, "sp500"), (ann_n, "nasdaq"), (ann_k, "kospi"), (ann_d, "dow"), (ann_kq, "kosdaq")]:
+        ann_s, ann_n, ann_k, ann_d, ann_kq, ann_cn = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"])
+        for tab, key in [(ann_s, "sp500"), (ann_n, "nasdaq"), (ann_k, "kospi"), (ann_d, "dow"), (ann_kq, "kosdaq"), (ann_cn, "csi300")]:
             with tab:
                 render_digit_tab(key)
 
