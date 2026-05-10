@@ -682,7 +682,7 @@ def main():
             )
 
         # ── 2. 현재 권장 자산배분 카드 ──
-        st.markdown('<div class="section-title">🎯 현재 권장 자산배분</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🎯 현재 권장 자산배분 (전략7)</div>', unsafe_allow_html=True)
 
         cols5 = st.columns(5)
         for key, col in zip(["sp500", "nasdaq", "kospi", "dow", "kosdaq"], cols5):
@@ -744,10 +744,7 @@ def main():
                     f'<div style="color:#6b7280;font-size:11px;margin-top:2px;">끝자리 {digit}</div></div></div>'
                     f'{sell_note}'
                     f'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px;">{badges}</div>'
-                    f'<div style="border-top:1px solid #1e2a3a;padding-top:12px;">'
-                    f'<div style="color:#6b7280;font-size:11px;margin-bottom:4px;">이번 시즌 포트폴리오 수익률 (전략7)</div>'
-                    f'<div style="color:{port_color};font-size:26px;font-weight:800;">{port_val}</div>'
-                    f'</div></div>',
+                    f'</div>',
                     unsafe_allow_html=True,
                 )
 
