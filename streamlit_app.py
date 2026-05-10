@@ -829,7 +829,7 @@ def main():
                 v["전략7"]   *= (1+w7*rs+0.25*rg+0.25*rb)
                 v["BH_max"]  *= (1+0.50*rs+0.25*rg+0.25*rb)
                 v["BH_min"]  *= (1+0.25*rs+0.25*rg+0.25*rb)
-                v["주식단독"] *= (1+(rs if inv else 0))
+                v["주식단독"] *= (1+rs)   # 순수 주식 BH (시즌 무관)
                 for c in cols: vals[c].append(v[c])
                 dates.append(dt)
             return {c: pd.Series(vals[c], index=dates).resample("W").last() for c in cols}
@@ -965,7 +965,7 @@ def main():
                 v["전략7"]   *= (1 + w7*rs  + 0.25*rg + 0.25*rb)
                 v["BH_max"]  *= (1 + 0.50*rs + 0.25*rg + 0.25*rb)
                 v["BH_min"]  *= (1 + 0.25*rs + 0.25*rg + 0.25*rb)
-                v["주식단독"] *= (1 + (rs if invest else 0.0))
+                v["주식단독"] *= (1 + rs)   # 순수 주식 BH (시즌 무관)
                 for c in cols: vals[c].append(v[c])
                 dates.append(dt)
 
