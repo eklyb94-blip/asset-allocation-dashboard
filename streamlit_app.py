@@ -3158,19 +3158,126 @@ def main():
                 f'</div>'
             )
 
+        # ── 일별 낙폭 경로 차트 함수 ──
+        def _path_chart(df_group, title, line_color_list, show_days=120):
+            """고점 기준 일별 누적 낙폭 경로를 겹쳐 그리는 차트"""
+            fig = go.Figure()
+            # cyc 원본(datetime 인덱스 있는 것)에서 고점/저점 날짜 가져오기
+            _cyc_orig = cyc.copy()
+            _cyc_orig["고점일_str"] = _cyc_orig["고점일"].dt.strftime("%Y-%m-%d")
+
+            for i, (_, row) in enumerate(df_group.iterrows()):
+                peak_str   = row["고점일"]
+                trough_str = row["저점일"]
+                peak_dt    = pd.Timestamp(peak_str)
+                trough_dt  = pd.Timestamp(trough_str)
+
+                # 고점 ~ 저점 + show_days 이후까지 가격 추출
+                end_dt = trough_dt + pd.Timedelta(days=show_days)
+                _seg = _sp_raw[(  _sp_raw.index >= peak_dt)
+                               & (_sp_raw.index <= end_dt)]
+                if len(_seg) < 2:
+                    continue
+
+                peak_val = float(_seg.iloc[0])
+                days  = [(d - peak_dt).days for d in _seg.index]
+                dd_pct = [(float(v) / peak_val - 1) * 100 for v in _seg]
+                trough_day = (trough_dt - peak_dt).days
+
+                color = line_color_list[i % len(line_color_list)]
+                label = f"{peak_str[:7]}"  # YYYY-MM
+
+                # 낙폭 경로선
+                fig.add_trace(go.Scatter(
+                    x=days, y=dd_pct,
+                    mode="lines",
+                    name=label,
+                    line=dict(color=color, width=2),
+                    hovertemplate=(
+                        f"<b>{label}</b><br>"
+                        "경과: %{x}일<br>"
+                        "누적낙폭: %{y:.1f}%<extra></extra>"
+                    ),
+                ))
+                # 저점 마커
+                trough_pct = (float(_sp_raw.get(trough_dt,
+                              _sp_raw[_sp_raw.index <= trough_dt].iloc[-1]))
+                              / peak_val - 1) * 100
+                fig.add_trace(go.Scatter(
+                    x=[trough_day], y=[trough_pct],
+                    mode="markers",
+                    marker=dict(color=color, size=9, symbol="circle",
+                                line=dict(color="#ffffff", width=1.5)),
+                    showlegend=False,
+                    hovertemplate=(
+                        f"<b>{label} 저점</b><br>"
+                        f"경과: {trough_day}일<br>"
+                        f"최대낙폭: {trough_pct:.1f}%<extra></extra>"
+                    ),
+                ))
+
+            # 기준선 (0%)
+            fig.add_hline(y=0, line=dict(color="#374151", width=1, dash="dot"))
+            # 저점 구분선
+            fig.add_vline(x=0, line=dict(color="#4b5563", width=1, dash="dot"))
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=420,
+                margin=dict(l=0, r=0, t=36, b=0),
+                title=dict(text=title, font=dict(size=13, color="#f1f5f9")),
+                legend=dict(orientation="h", y=1.06, x=0,
+                            font=dict(size=11), traceorder="normal"),
+                xaxis=dict(
+                    title=dict(text="고점 이후 경과일", font=dict(color="#6b7280", size=11)),
+                    showgrid=True, gridcolor="#1e2a3a",
+                    zeroline=True, zerolinecolor="#4b5563",
+                    tickfont=dict(size=10, color="#9ca3af"),
+                ),
+                yaxis=dict(
+                    title=dict(text="누적 낙폭 (%)", font=dict(color="#6b7280", size=11)),
+                    showgrid=True, gridcolor="#1e2a3a",
+                    ticksuffix="%", tickfont=dict(size=10),
+                ),
+                hovermode="x unified",
+            )
+            return fig
+
+        # 유형별 색상 팔레트
+        _colors_ultra = ["#f87171","#fb923c","#fbbf24","#a78bfa","#60a5fa","#34d399","#f472b6"]
+        _colors_fast  = ["#fbbf24","#f59e0b","#d97706","#fb923c","#f87171",
+                         "#a78bfa","#60a5fa","#34d399","#6ee7b7","#c4b5fd"]
+        _colors_slow  = ["#6366f1","#5b9bd5","#06b6d4","#22c55e","#84cc16",
+                         "#a78bfa","#e879f9","#94a3b8","#475569","#64748b",
+                         "#0ea5e9","#f472b6","#10b981"]
+
         _ct1, _ct2, _ct3 = st.tabs([
-            f"🔴 초단기급락 (속도>0.40%/일)",
-            f"🟡 빠른하락 (0.20~0.40%/일)",
-            f"🔵 느린하락 (속도≤0.20%/일)",
+            "🔴 초단기급락 (속도>0.40%/일)",
+            "🟡 빠른하락 (0.20~0.40%/일)",
+            "🔵 느린하락 (속도≤0.20%/일)",
         ])
-        for _ctab, _label, _mask in [
-            (_ct1, "초단기급락", _disp["유형"] == "초단기급락"),
-            (_ct2, "빠른하락",   _disp["유형"] == "빠른하락"),
-            (_ct3, "느린하락",   _disp["유형"] == "느린하락"),
+        for _ctab, _label, _mask, _colors, _show in [
+            (_ct1, "초단기급락", _disp["유형"] == "초단기급락", _colors_ultra, 90),
+            (_ct2, "빠른하락",   _disp["유형"] == "빠른하락",   _colors_fast,  120),
+            (_ct3, "느린하락",   _disp["유형"] == "느린하락",   _colors_slow,  180),
         ]:
             with _ctab:
                 _sub = _disp[_mask].reset_index(drop=True)
                 st.markdown(_tbl_summary(_sub), unsafe_allow_html=True)
+
+                # 낙폭 경로 차트
+                st.plotly_chart(
+                    _path_chart(
+                        _sub,
+                        f"{_label} — 고점 기준 일별 누적 낙폭 경로 (원 = 저점, 이후는 반등 추이)",
+                        _colors,
+                        show_days=_show,
+                    ),
+                    use_container_width=True,
+                )
+
                 st.dataframe(_style_crash_table(_sub), use_container_width=True,
                              height=min(80 + len(_sub)*36, 520), hide_index=True)
 
