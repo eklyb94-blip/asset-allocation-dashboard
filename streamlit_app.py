@@ -1,7 +1,7 @@
 """
 자산배분 포트폴리오 대시보드
-- 현금보유 시: 주식25% / 현금25% / 금25% / 국채30년25%
-- 주식투자 시: 주식50% / 현금0%  / 금25% / 국채30년25%
+- 현금보유 시: 주식25% / 현금25% / 금25% / 국채10년25%
+- 주식투자 시: 주식50% / 현금0%  / 금25% / 국채10년25%
 - 신호: 끝자리 전략6 (수익확률 >= 60% 끝자리만 투자)
 """
 
@@ -86,7 +86,7 @@ st.markdown("""
 # 상수
 # ═══════════════════════════════════════════
 THRESHOLD   = 0.60
-DURATION_US = 18.0   # 미국 30년채 Modified Duration 근사
+DURATION_US = 8.5    # 미국 10년채 Modified Duration 근사
 
 # ═══════════════════════════════════════════
 # 데이터 로딩 (1시간 캐시)
@@ -227,18 +227,18 @@ def load_raw():
             return dl("GC=F", "2000-01-01", "GOLD")
 
     def load_us30y():
-        """FRED DGS30(1977~) + yfinance ^TYX 최신 보완"""
+        """FRED DGS10(1962~) + yfinance ^TNX 최신 보완 (10년물)"""
         if _PDR_OK:
             try:
-                s = pdr.DataReader("DGS30", "fred",
-                                   start=date(1977, 1, 1))["DGS30"].dropna()
+                s = pdr.DataReader("DGS10", "fred",
+                                   start=date(1962, 1, 1))["DGS10"].dropna()
                 s.index = pd.to_datetime(s.index).tz_localize(None)
                 s = s.sort_index()
                 # yfinance로 FRED 지연분 보완
                 last_date = s.index[-1]
                 yf_start  = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
                 try:
-                    yf_df = yf.download("^TYX", start=yf_start, auto_adjust=True,
+                    yf_df = yf.download("^TNX", start=yf_start, auto_adjust=True,
                                         progress=False, multi_level_index=False)
                     if isinstance(yf_df.columns, pd.MultiIndex):
                         yf_df.columns = yf_df.columns.get_level_values(0)
@@ -253,8 +253,8 @@ def load_raw():
                 return s, False
             except Exception:
                 pass
-        # FRED 실패 시 yfinance ^TYX 폴백 (1985~)
-        return dl("^TYX", "1985-01-01", "US30Y")
+        # FRED 실패 시 yfinance ^TNX 폴백 (10년물, 1985~)
+        return dl("^TNX", "1985-01-01", "US30Y")
 
     results, offline_flags = {}, {}
     for key, (ticker, start, csv_name) in _ticker_map.items():
@@ -756,10 +756,10 @@ def main():
                     "invest": inv, "sell": sell, "sig_cnt": sig_cnt, "w7": w7}
 
     meta = {
-        "sp500":  {"name": "S&P500", "emoji": "🇺🇸", "bond": "미국채30년", "color": "#5b9bd5"},
-        "nasdaq": {"name": "NASDAQ", "emoji": "💻",  "bond": "미국채30년", "color": "#ef4444"},
+        "sp500":  {"name": "S&P500", "emoji": "🇺🇸", "bond": "미국채10년", "color": "#5b9bd5"},
+        "nasdaq": {"name": "NASDAQ", "emoji": "💻",  "bond": "미국채10년", "color": "#ef4444"},
         "kospi":  {"name": "KOSPI",  "emoji": "🇰🇷", "bond": "한국채30년", "color": "#22c55e"},
-        "dow":    {"name": "DOW",    "emoji": "🏛️",  "bond": "미국채30년", "color": "#f59e0b"},
+        "dow":    {"name": "DOW",    "emoji": "🏛️",  "bond": "미국채10년", "color": "#f59e0b"},
         "kosdaq": {"name": "KOSDAQ", "emoji": "📱",  "bond": "한국채30년", "color": "#06b6d4"},
     }
 
