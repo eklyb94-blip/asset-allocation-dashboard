@@ -123,8 +123,6 @@ def _load_csv_fallback(name: str) -> pd.Series:
 def load_raw():
     # 티커 → (yfinance 티커, 시작일, 백업 CSV 파일명)
     _ticker_map = {
-        "nasdaq": ("^IXIC",     "1985-01-01", "NASDAQ"),
-        "dow":    ("^DJI",      "1985-01-01", "DOW"),
         "kosdaq": ("^KQ11",     "1997-01-01", "KOSDAQ"),
         "krbond": ("114820.KS", "2009-01-01", "KRBOND"),
     }
@@ -170,19 +168,18 @@ def load_raw():
             s, offline = dl("^KS11", "1985-01-01", "KOSPI")
             return s, offline
 
-    def load_sp500():
-        """sp500_history.csv(1970~) + yfinance 최신 데이터 병합"""
-        SP500_CSV = pathlib.Path(__file__).parent / "sp500_history.csv"
+    def load_from_csv(csv_filename, yf_ticker, start_date="1970-01-01", fallback_csv=""):
+        """로컬 CSV(1970~) + yfinance 최신 보완 공통 헬퍼"""
+        CSV_PATH = pathlib.Path(__file__).parent / csv_filename
         try:
-            hist = pd.read_csv(SP500_CSV, parse_dates=["Date"], index_col="Date")
+            hist = pd.read_csv(CSV_PATH, parse_dates=["Date"], index_col="Date")
             hist.index = pd.to_datetime(hist.index).tz_localize(None)
             s_hist = hist["Close"].dropna().sort_index()
-            s_hist = s_hist[s_hist.index >= "1970-01-01"]
-            # yfinance로 최신 데이터 보완
+            s_hist = s_hist[s_hist.index >= start_date]
             last_date = s_hist.index[-1]
             yf_start  = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
             try:
-                yf_df = yf.download("^GSPC", start=yf_start, auto_adjust=True,
+                yf_df = yf.download(yf_ticker, start=yf_start, auto_adjust=True,
                                     progress=False, multi_level_index=False)
                 if isinstance(yf_df.columns, pd.MultiIndex):
                     yf_df.columns = yf_df.columns.get_level_values(0)
@@ -196,35 +193,7 @@ def load_raw():
                 pass
             return s_hist, False
         except Exception:
-            # 로컬 CSV 없으면 yfinance 폴백 (1985~)
-            return dl("^GSPC", "1985-01-01", "SP500")
-
-    def load_gold():
-        """gold_history.csv(1970~) + yfinance 최신 데이터 병합"""
-        GOLD_CSV = pathlib.Path(__file__).parent / "gold_history.csv"
-        try:
-            hist = pd.read_csv(GOLD_CSV, parse_dates=["Date"], index_col="Date")
-            hist.index = pd.to_datetime(hist.index).tz_localize(None)
-            s_hist = hist["Close"].dropna().sort_index()
-            s_hist = s_hist[s_hist.index >= "1970-01-01"]
-            last_date = s_hist.index[-1]
-            yf_start  = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-            try:
-                yf_df = yf.download("GC=F", start=yf_start, auto_adjust=True,
-                                    progress=False, multi_level_index=False)
-                if isinstance(yf_df.columns, pd.MultiIndex):
-                    yf_df.columns = yf_df.columns.get_level_values(0)
-                if not yf_df.empty and "Close" in yf_df.columns:
-                    s_yf = yf_df["Close"].dropna()
-                    s_yf.index = pd.to_datetime(s_yf.index).tz_localize(None)
-                    combined = pd.concat([s_hist, s_yf])
-                    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
-                    return combined, False
-            except Exception:
-                pass
-            return s_hist, False
-        except Exception:
-            return dl("GC=F", "2000-01-01", "GOLD")
+            return dl(yf_ticker, "1985-01-01", fallback_csv or csv_filename.upper())
 
     def load_us30y():
         """FRED DGS10(1962~) + yfinance ^TNX 최신 보완 (10년물)"""
@@ -260,8 +229,10 @@ def load_raw():
     for key, (ticker, start, csv_name) in _ticker_map.items():
         results[key], offline_flags[key] = dl(ticker, start, csv_name)
     results["kospi"],  offline_flags["kospi"]  = load_kospi()
-    results["sp500"],  offline_flags["sp500"]  = load_sp500()
-    results["gold"],   offline_flags["gold"]   = load_gold()
+    results["sp500"],  offline_flags["sp500"]  = load_from_csv("sp500_history.csv",  "^GSPC",  "1970-01-01", "SP500")
+    results["gold"],   offline_flags["gold"]   = load_from_csv("gold_history.csv",   "GC=F",   "1970-01-01", "GOLD")
+    results["nasdaq"], offline_flags["nasdaq"] = load_from_csv("nasdaq_history.csv", "^IXIC",  "1970-01-01", "NASDAQ")
+    results["dow"],    offline_flags["dow"]    = load_from_csv("dow_history.csv",    "^DJI",   "1970-01-01", "DOW")
     results["us30y"],  offline_flags["us30y"]  = load_us30y()
 
     # 오프라인 여부를 session_state에 기록 (UI 배너용)
@@ -333,51 +304,62 @@ def load_multpl(url):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_daily_ohlc():
-    tickers = {
-        "nasdaq": ("^IXIC", "1985-01-01", "NASDAQ"),
-        "kospi":  ("^KS11", "1990-01-01", "KOSPI"),
-        "dow":    ("^DJI",  "1985-01-01", "DOW"),
-        "kosdaq": ("^KQ11", "1997-01-01", "KOSDAQ"),
-    }
     result = {}
 
-    # SP500: 프로젝트 내 sp500_history.csv(1970~) 우선 사용
-    SP500_CSV = pathlib.Path(__file__).parent / "sp500_history.csv"
-    try:
-        hist = pd.read_csv(SP500_CSV, parse_dates=["Date"], index_col="Date")
-        hist.index = pd.to_datetime(hist.index).tz_localize(None)
-        sp_close = hist["Close"].dropna().sort_index()
-        sp_close = sp_close[sp_close.index >= "1970-01-01"]
-        # yfinance로 최신 보완
-        last_date = sp_close.index[-1]
+    # CSV(1970~) + yfinance 최신 보완 공통 함수
+    def from_csv(csv_filename, yf_ticker, fallback_start="1985-01-01"):
+        CSV_PATH = pathlib.Path(__file__).parent / csv_filename
         try:
-            yf_df = yf.download("^GSPC", start=(last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
-                                auto_adjust=True, progress=False, multi_level_index=False)
-            if isinstance(yf_df.columns, pd.MultiIndex):
-                yf_df.columns = yf_df.columns.get_level_values(0)
-            if not yf_df.empty and "Close" in yf_df.columns:
-                s_yf = yf_df["Close"].dropna()
-                s_yf.index = pd.to_datetime(s_yf.index).tz_localize(None)
-                sp_close = pd.concat([sp_close, s_yf])
-                sp_close = sp_close[~sp_close.index.duplicated(keep="last")].sort_index()
+            hist = pd.read_csv(CSV_PATH, parse_dates=["Date"], index_col="Date")
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            s = hist["Close"].dropna().sort_index()
+            s = s[s.index >= "1970-01-01"]
+            last = s.index[-1]
+            try:
+                yf_df = yf.download(yf_ticker,
+                                    start=(last + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                                    auto_adjust=True, progress=False, multi_level_index=False)
+                if isinstance(yf_df.columns, pd.MultiIndex):
+                    yf_df.columns = yf_df.columns.get_level_values(0)
+                if not yf_df.empty and "Close" in yf_df.columns:
+                    s_yf = yf_df["Close"].dropna()
+                    s_yf.index = pd.to_datetime(s_yf.index).tz_localize(None)
+                    s = pd.concat([s, s_yf])
+                    s = s[~s.index.duplicated(keep="last")].sort_index()
+            except Exception:
+                pass
+            return s
         except Exception:
-            pass
-    except Exception:
-        try:
-            yf_df = yf.download("^GSPC", start="1985-01-01", auto_adjust=True,
-                                progress=False, multi_level_index=False)
-            if isinstance(yf_df.columns, pd.MultiIndex):
-                yf_df.columns = yf_df.columns.get_level_values(0)
-            sp_close = yf_df["Close"].dropna()
-            sp_close.index = pd.to_datetime(sp_close.index).tz_localize(None)
-        except Exception:
-            sp_close = _load_csv_fallback("SP500")
-    sp_df = sp_close.to_frame("Close").dropna()
-    sp_df["prev_close"] = sp_df["Close"].shift(1)
-    sp_df["daily_ret"]  = sp_df["Close"].pct_change()
-    result["sp500"] = sp_df.dropna()
+            try:
+                yf_df = yf.download(yf_ticker, start=fallback_start, auto_adjust=True,
+                                    progress=False, multi_level_index=False)
+                if isinstance(yf_df.columns, pd.MultiIndex):
+                    yf_df.columns = yf_df.columns.get_level_values(0)
+                s = yf_df["Close"].dropna()
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+                return s
+            except Exception:
+                return pd.Series(dtype=float)
 
-    for key, (ticker, start, csv_name) in tickers.items():
+    # CSV 기반 1970~ 로드
+    csv_sources = {
+        "sp500":  ("sp500_history.csv",  "^GSPC"),
+        "nasdaq": ("nasdaq_history.csv", "^IXIC"),
+        "dow":    ("dow_history.csv",    "^DJI"),
+    }
+    for key, (csv_file, ticker) in csv_sources.items():
+        s = from_csv(csv_file, ticker)
+        df = s.to_frame("Close").dropna()
+        df["prev_close"] = df["Close"].shift(1)
+        df["daily_ret"]  = df["Close"].pct_change()
+        result[key] = df.dropna()
+
+    # yfinance 전용 (KOSPI/KOSDAQ)
+    yf_sources = {
+        "kospi":  ("^KS11", "1990-01-01", "KOSPI"),
+        "kosdaq": ("^KQ11", "1997-01-01", "KOSDAQ"),
+    }
+    for key, (ticker, start, csv_name) in yf_sources.items():
         try:
             df = yf.download(ticker, start=start, auto_adjust=True, progress=False,
                              multi_level_index=False)
@@ -394,8 +376,8 @@ def load_daily_ohlc():
         df = df[["Close"]].dropna()
         df["prev_close"] = df["Close"].shift(1)
         df["daily_ret"]  = df["Close"].pct_change()
-        df = df.dropna()
-        result[key] = df
+        result[key] = df.dropna()
+
     return result
 
 
