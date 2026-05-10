@@ -167,8 +167,8 @@ def load_raw():
             return s, offline
 
     def load_sp500():
-        """STOOQ 로컬 CSV(1970~) + yfinance 최신 데이터 병합"""
-        SP500_CSV = pathlib.Path(r"D:\N_Drive\YB_DOC\퀀트\STOOQ자료\SP500.csv")
+        """sp500_history.csv(1970~) + yfinance 최신 데이터 병합"""
+        SP500_CSV = pathlib.Path(__file__).parent / "sp500_history.csv"
         try:
             hist = pd.read_csv(SP500_CSV, parse_dates=["Date"], index_col="Date")
             hist.index = pd.to_datetime(hist.index).tz_localize(None)
@@ -278,8 +278,8 @@ def load_daily_ohlc():
     }
     result = {}
 
-    # SP500: STOOQ 로컬 CSV(1970~) 우선 사용
-    SP500_CSV = pathlib.Path(r"D:\N_Drive\YB_DOC\퀀트\STOOQ자료\SP500.csv")
+    # SP500: 프로젝트 내 sp500_history.csv(1970~) 우선 사용
+    SP500_CSV = pathlib.Path(__file__).parent / "sp500_history.csv"
     try:
         hist = pd.read_csv(SP500_CSV, parse_dates=["Date"], index_col="Date")
         hist.index = pd.to_datetime(hist.index).tz_localize(None)
