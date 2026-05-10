@@ -896,112 +896,47 @@ def main():
                 unsafe_allow_html=True,
             )
 
-        # ── 4. 누적 성과 차트 ──
-        st.markdown('<div class="section-title">📊 누적 성과 차트</div>', unsafe_allow_html=True)
-
-        def _chart_series(key):
-            """전략7 / 비교군 전체를 일별 계산 → 주별 리샘플해서 반환"""
-            sim = sims.get(key, pd.DataFrame())
-            if sim.empty: return {}
-            bond_key = "krbond" if key in ("kospi","kosdaq") else "us30y"
-            d_stk = raw[key].pct_change().dropna()
-            d_gld = raw["gold"].pct_change().dropna()
-            d_bnd = (-DURATION_US*raw["us30y"].diff()/100).dropna() if bond_key=="us30y" \
-                    else raw["krbond"].pct_change().dropna()
-            for s in [d_stk, d_gld, d_bnd]:
-                s.index = pd.to_datetime(s.index).tz_localize(None)
-            px = raw[key].copy(); px.index = pd.to_datetime(px.index).tz_localize(None)
-            dl = px.diff()
-            rsi = 100 - 100/(1+dl.clip(lower=0).rolling(14).mean() /
-                              (-dl.clip(upper=0)).rolling(14).mean().replace(0,np.nan))
-            ma200=px.rolling(200).mean(); mag=(px-ma200)/ma200*100
-            ma20=px.rolling(20).mean(); s20=px.rolling(20).std()
-            bbr=(ma20+2*s20)-(ma20-2*s20)
-            bbp=(px-(ma20-2*s20))/bbr.replace(0,np.nan)*100
-            dd=(px-px.cummax())/px.cummax()*100
-            if key in ("kospi","kosdaq","csi300"):
-                sv=(px.pct_change().rolling(20).std()*(252**0.5)*100>=35).astype(int)
-            else:
-                vh=load_vix_history(); vh.index=pd.to_datetime(vh.index).tz_localize(None)
-                sv=(vh.reindex(px.index,method="ffill").fillna(20)>=40).astype(int)
-            sig=((dd<=-30).astype(int)+(rsi<=30).astype(int)+
-                 (mag<=-15).astype(int)+(bbp<=0).astype(int)+sv).fillna(0).to_dict()
-            im={(int(r["연도"]),r["시즌"]):bool(r["투자"]) for _,r in sim.iterrows()}
-            cols=["전략7","BH_max","BH_min","주식단독"]
-            v={c:100.0 for c in cols}; vals={c:[] for c in cols}; dates=[]; sell=False
-            gi=set(d_gld.index); bi=set(d_bnd.index)
-            for dt in d_stk.index:
-                mo=dt.month
-                if mo>=11: sea,sy="Nov-Apr",dt.year
-                elif mo<=4: sea,sy="Nov-Apr",dt.year-1
-                else: sea,sy="May-Oct",dt.year
-                inv=im.get((sy,sea),False)
-                rs=float(d_stk[dt]); rg=float(d_gld[dt]) if dt in gi else 0; rb=float(d_bnd[dt]) if dt in bi else 0
-                s=float(sig.get(dt,0))
-                if s>=2: sell=True
-                elif s==0: sell=False
-                w7=0 if sell else (0.5 if inv else 0.25)
-                v["전략7"]   *= (1+w7*rs+0.25*rg+0.25*rb)
-                v["BH_max"]  *= (1+0.50*rs+0.25*rg+0.25*rb)
-                v["BH_min"]  *= (1+0.25*rs+0.25*rg+0.25*rb)
-                v["주식단독"] *= (1+rs)   # 순수 주식 BH (시즌 무관)
-                for c in cols: vals[c].append(v[c])
-                dates.append(dt)
-            return {c: pd.Series(vals[c], index=dates).resample("W").last() for c in cols}
-
-        def make_perf_chart(chart_data, title, accent):
-            if not chart_data:
-                fig = go.Figure()
-                fig.update_layout(
-                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
-                    height=380, margin=dict(l=0, r=0, t=60, b=0),
-                    annotations=[dict(text="데이터를 불러오는 중입니다. 잠시 후 새로고침 해주세요.",
-                                      x=0.5, y=0.5, showarrow=False,
-                                      font=dict(color="#9ca3af", size=14))],
-                )
-                return fig
-            fig = go.Figure()
-            cfg = [
-                ("전략7",   "전략7 포트폴리오", accent,    3.0),
-                ("BH_max",  "주식50% BH",      "#6b7280", 1.5),
-                ("BH_min",  "주식25% BH",      "#4b5563", 1.5),
-                ("주식단독", "주식단독",         "#fbbf24", 1.5),
-            ]
-            for col, name, c, w in cfg:
-                s = chart_data.get(col)
-                if s is None or s.empty: continue
-                fig.add_trace(go.Scatter(
-                    x=s.index, y=s.values, name=name, mode="lines",
-                    line=dict(color=c, width=w),
-                    hovertemplate=f"<b>{name}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:.1f}}<extra></extra>",
-                ))
-            fig.update_layout(
-                template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
-                title=dict(text=title, font=dict(size=14, color="#f1f5f9")),
-                legend=dict(orientation="h", y=1.05, x=0, font=dict(size=11)),
-                xaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=9)),
-                yaxis=dict(showgrid=True, gridcolor="#1e2a3a"),
-                hovermode="x unified", height=380,
-                margin=dict(l=0, r=0, t=60, b=0),
-            )
-            return fig
-
-        tab_s, tab_n, tab_k, tab_d, tab_kq, tab_cn = st.tabs(["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"])
-        for tab, key in [(tab_s,"sp500"), (tab_n,"nasdaq"), (tab_k,"kospi"), (tab_d,"dow"), (tab_kq,"kosdaq"), (tab_cn,"csi300")]:
-            with tab:
-                m = meta[key]
-                st.plotly_chart(
-                    make_perf_chart(_chart_series(key),
-                                    f"{m['name']} 자산배분 포트폴리오 누적성과 (시작=100)",
-                                    m["color"]),
-                    use_container_width=True,
-                )
-
-        # ── 5. 장기 백테스트 성과 카드 ──
+        # ── 4. 장기 백테스트 성과 ──
         st.markdown('<div class="section-title">📊 장기 백테스트 성과</div>', unsafe_allow_html=True)
 
-        def _daily_pf_series(key):
-            """일별 포트폴리오 가치 시리즈 반환 — 전략6/전략7/BH/주식단독"""
+        # ── 수수료 입력 ──
+        if "applied_fee" not in st.session_state:
+            st.session_state.applied_fee = 0.0
+
+        _fc1, _fc2, _fc3 = st.columns([1.2, 0.6, 4])
+        with _fc1:
+            _fee_input = st.number_input(
+                "왕복 수수료 (%)", min_value=0.0, max_value=2.0,
+                value=st.session_state.applied_fee, step=0.05, format="%.2f",
+                help="매도+매수 1사이클 합산 비용 (예: 0.30 = 왕복 0.3%)",
+                key="fee_input_widget",
+            )
+        with _fc2:
+            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+            if st.button("✅ 적용", key="fee_apply_btn"):
+                st.session_state.applied_fee = _fee_input
+                st.rerun()
+        with _fc3:
+            _af = st.session_state.applied_fee
+            if _af > 0:
+                st.markdown(
+                    f"<div style='margin-top:32px;color:#fbbf24;font-size:12px;'>"
+                    f"💡 현재 적용 수수료: 왕복 <b>{_af:.2f}%</b> — "
+                    f"매도신호 1회당 포트폴리오의 <b>{_af/2:.2f}%</b>씩 2회 차감</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    "<div style='margin-top:32px;color:#4b5563;font-size:12px;'>"
+                    "수수료 0% 적용 중 (거래비용 미반영)</div>",
+                    unsafe_allow_html=True,
+                )
+        _applied_fee = st.session_state.applied_fee
+
+        def _daily_pf_series(key, fee_pct=0.0):
+            """일별 포트폴리오 가치 시리즈 반환 — 전략6/전략7/BH/주식단독
+            fee_pct: 왕복 수수료(%) — 매도/매수 각 leg마다 fee_pct/2 차감
+            """
             sim = sims.get(key, pd.DataFrame())
             if sim.empty:
                 return {}
@@ -1055,32 +990,60 @@ def main():
             gold_idx = set(d_gold.index)
             bond_idx = set(d_bond.index)
             s7_sell  = False  # 전략7 매도 상태
+            fee_leg  = fee_pct / 100 / 2   # 매 leg(매도 or 매수)당 비용
+
+            # ── BH_max / BH_min 자산별 개별 추적 (6개월 리밸런싱용) ──
+            # BH_max : 주식50 / 금25 / 채권25 / 현금0
+            # BH_min : 주식25 / 금25 / 채권25 / 현금25
+            bm_stk, bm_gld, bm_bnd          = 50.0, 25.0, 25.0        # BH_max 컴포넌트
+            bl_stk, bl_gld, bl_bnd, bl_csh  = 25.0, 25.0, 25.0, 25.0  # BH_min 컴포넌트
+            prev_season_key = None  # 시즌 전환 감지용
 
             for dt in d_stk.index:
                 mo = dt.month
                 if mo >= 11:   season, sy = "Nov-Apr", dt.year
                 elif mo <= 4:  season, sy = "Nov-Apr", dt.year - 1
                 else:          season, sy = "May-Oct", dt.year
+                season_key = (sy, season)
 
                 invest = invest_map.get((sy, season), False)
                 rs = float(d_stk[dt])
                 rg = float(d_gold[dt]) if dt in gold_idx else 0.0
                 rb = float(d_bond[dt]) if dt in bond_idx else 0.0
 
-                # 전략7 매도 상태 갱신
+                # ── 시즌 전환 시 BH 리밸런싱 ──
+                if season_key != prev_season_key and prev_season_key is not None:
+                    # BH_max → 50:25:25 복원
+                    tot_max = bm_stk + bm_gld + bm_bnd
+                    bm_stk, bm_gld, bm_bnd = tot_max*0.50, tot_max*0.25, tot_max*0.25
+                    # BH_min → 25:25:25:25 복원
+                    tot_min = bl_stk + bl_gld + bl_bnd + bl_csh
+                    bl_stk = bl_gld = bl_bnd = bl_csh = tot_min * 0.25
+                prev_season_key = season_key
+
+                # 전략7 매도 상태 갱신 + 수수료 차감
                 s = float(sig_dict.get(dt, 0))
+                prev_sell = s7_sell
                 if   s >= 2: s7_sell = True
                 elif s == 0: s7_sell = False
-                # s == 1 → 상태 유지
+                if s7_sell != prev_sell:
+                    v["전략7"] *= (1 - fee_leg)
 
                 w6 = 0.50 if invest else 0.25
                 w7 = 0.0  if s7_sell else w6
 
+                # 전략6/7: 기존 방식 (시즌 시작 시 비중 결정 후 일별 적용)
                 v["전략6"]   *= (1 + w6*rs  + 0.25*rg + 0.25*rb)
                 v["전략7"]   *= (1 + w7*rs  + 0.25*rg + 0.25*rb)
-                v["BH_max"]  *= (1 + 0.50*rs + 0.25*rg + 0.25*rb)
-                v["BH_min"]  *= (1 + 0.25*rs + 0.25*rg + 0.25*rb)
-                v["주식단독"] *= (1 + rs)   # 순수 주식 BH (시즌 무관)
+                v["주식단독"] *= (1 + rs)
+
+                # BH_max / BH_min: 자산별 성장 후 합산
+                bm_stk *= (1 + rs); bm_gld *= (1 + rg); bm_bnd *= (1 + rb)
+                bl_stk *= (1 + rs); bl_gld *= (1 + rg); bl_bnd *= (1 + rb)
+                # bl_csh: 무이자 현금 → 변화 없음
+                v["BH_max"] = bm_stk + bm_gld + bm_bnd
+                v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
+
                 for c in cols: vals[c].append(v[c])
                 dates.append(dt)
 
@@ -1121,8 +1084,8 @@ def main():
                 f'</div></div>'
             )
 
-        def _render_perf_tab(key):
-            pf = _daily_pf_series(key)
+        def _render_perf_tab(key, fee_pct=0.0):
+            pf = _daily_pf_series(key, fee_pct=fee_pct)
             if not pf:
                 st.warning("데이터 없음")
                 return
@@ -1136,8 +1099,15 @@ def main():
             y0 = pf["전략7"].index[0].year
             y1 = pf["전략7"].index[-1].year
 
+            # ── 수수료 배지 ──
+            fee_badge = (
+                f" &nbsp;<span style='font-size:10px;color:#fbbf24;background:#1a1305;"
+                f"border:1px solid #92400e;border-radius:4px;padding:1px 6px;'>"
+                f"수수료 {fee_pct:.2f}% 반영</span>"
+                if fee_pct > 0 else ""
+            )
             # ── 전략7 히어로 카드 ──
-            hero = _card_html("⚡ 전략7  (전략6 + 매도신호≥2 시 주식0%)",
+            hero = _card_html(f"⚡ 전략7  (전략6 + 매도신호≥2 시 주식0%){fee_badge}",
                                "#0d0f1a", "#a78bfa", s7_cum, s7_cagr, s7_mdd, large=True)
             # ── 비교 카드 4개 ──
             cmp = (
@@ -1158,16 +1128,18 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            # ── 전략7 vs 전략6 비교 차트 ──
+            # ── 누적 성과 비교 차트 ──
+            fee_title = f"  (수수료 {fee_pct:.2f}% 반영)" if fee_pct > 0 else ""
             fig_c = go.Figure()
             chart_cfg = [
-                ("전략7", "⚡ 전략7", "#a78bfa", 2.5),
-                ("전략6", "⚙️ 전략6", "#34d399", 1.5),
-                ("BH_max","📈 주식50%BH", "#6366f1", 1.0),
-                ("BH_min","📊 주식25%BH", "#6b7280", 1.0),
+                ("전략7",    "⚡ 전략7",       "#a78bfa", 2.5),
+                ("전략6",    "⚙️ 전략6",       "#34d399", 1.5),
+                ("BH_max",  "📈 주식50%BH",   "#6366f1", 1.0),
+                ("BH_min",  "📊 주식25%BH",   "#6b7280", 1.0),
+                ("주식단독", "💹 주식단독BH",   "#fbbf24", 1.0),
             ]
             for col, name, color, width in chart_cfg:
-                s = pf[col].resample("W").last()  # 주별 샘플링
+                s = pf[col].resample("W").last()
                 fig_c.add_trace(go.Scatter(
                     x=s.index, y=s.values, name=name, mode="lines",
                     line=dict(color=color, width=width),
@@ -1175,8 +1147,8 @@ def main():
                 ))
             fig_c.update_layout(
                 template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
-                height=380, margin=dict(l=0, r=0, t=40, b=0),
-                title=dict(text="전략7 vs 전략6 누적 성과 비교 (시작=100)", font=dict(size=13, color="#f1f5f9")),
+                height=400, margin=dict(l=0, r=0, t=44, b=0),
+                title=dict(text=f"누적 성과 비교 (시작=100){fee_title}", font=dict(size=13, color="#f1f5f9")),
                 legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
                 xaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10, color="#9ca3af")),
                 yaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10)),
@@ -1192,7 +1164,7 @@ def main():
             (ptab_d,"dow"),(ptab_kq,"kosdaq"),(ptab_cn,"csi300")
         ]:
             with ptab:
-                _render_perf_tab(pkey)
+                _render_perf_tab(pkey, fee_pct=_applied_fee)
 
         # ── 6. 과거 데이터 테이블 ──
         st.markdown('<div class="section-title">🗂️ 과거 데이터 테이블</div>', unsafe_allow_html=True)
