@@ -3158,13 +3158,22 @@ def main():
                 f'</div>'
             )
 
-        # ── 일별 낙폭 경로 차트 함수 ──
+        # ── 일별 낙폭 속도 + 누적 이중 패널 차트 ──
         def _path_chart(df_group, title, line_color_list, show_days=120):
-            """고점 기준 일별 누적 낙폭 경로를 겹쳐 그리는 차트"""
-            fig = go.Figure()
-            # cyc 원본(datetime 인덱스 있는 것)에서 고점/저점 날짜 가져오기
-            _cyc_orig = cyc.copy()
-            _cyc_orig["고점일_str"] = _cyc_orig["고점일"].dt.strftime("%Y-%m-%d")
+            """
+            위: 일별 낙폭 속도 (그날 하루 얼마나 빠졌나, 막대)
+            아래: 누적 낙폭 (합산이 얼마나 쌓였나, 선)
+            — 고점 이후 경과일 기준, 각 사이클 겹쳐서 표시
+            """
+            from plotly.subplots import make_subplots
+
+            fig = make_subplots(
+                rows=2, cols=1,
+                shared_xaxes=True,
+                row_heights=[0.45, 0.55],
+                vertical_spacing=0.06,
+                subplot_titles=["일별 낙폭 속도 (%/일, 하락일만)", "누적 낙폭 (%)"],
+            )
 
             for i, (_, row) in enumerate(df_group.iterrows()):
                 peak_str   = row["고점일"]
@@ -3172,77 +3181,105 @@ def main():
                 peak_dt    = pd.Timestamp(peak_str)
                 trough_dt  = pd.Timestamp(trough_str)
 
-                # 고점 ~ 저점 + show_days 이후까지 가격 추출
                 end_dt = trough_dt + pd.Timedelta(days=show_days)
-                _seg = _sp_raw[(  _sp_raw.index >= peak_dt)
-                               & (_sp_raw.index <= end_dt)]
+                _seg = _sp_raw[(_sp_raw.index >= peak_dt) & (_sp_raw.index <= end_dt)]
                 if len(_seg) < 2:
                     continue
 
-                peak_val = float(_seg.iloc[0])
-                days  = [(d - peak_dt).days for d in _seg.index]
-                dd_pct = [(float(v) / peak_val - 1) * 100 for v in _seg]
+                peak_val   = float(_seg.iloc[0])
+                color      = line_color_list[i % len(line_color_list)]
+                label      = peak_str[:7]   # YYYY-MM
                 trough_day = (trough_dt - peak_dt).days
 
-                color = line_color_list[i % len(line_color_list)]
-                label = f"{peak_str[:7]}"  # YYYY-MM
+                # 경과일 / 일별수익률 / 누적낙폭
+                days    = [(d - peak_dt).days for d in _seg.index]
+                daily_r = [0.0] + [
+                    (float(_seg.iloc[j]) / float(_seg.iloc[j-1]) - 1) * 100
+                    for j in range(1, len(_seg))
+                ]
+                cum_dd  = [(float(v) / peak_val - 1) * 100 for v in _seg]
 
-                # 낙폭 경로선
+                # 하락일만 속도 표시 (양수 = 그날 하락폭)
+                speed_y = [abs(r) if r < 0 else 0 for r in daily_r]
+
+                # ── 위 패널: 일별 속도 막대 ──
+                fig.add_trace(go.Bar(
+                    x=days, y=speed_y,
+                    name=label,
+                    marker_color=color,
+                    opacity=0.75,
+                    legendgroup=label,
+                    showlegend=True,
+                    hovertemplate=(
+                        f"<b>{label}</b><br>"
+                        "경과: %{x}일<br>"
+                        "당일낙폭: -%{y:.2f}%<extra></extra>"
+                    ),
+                ), row=1, col=1)
+
+                # ── 아래 패널: 누적 낙폭 선 ──
                 fig.add_trace(go.Scatter(
-                    x=days, y=dd_pct,
+                    x=days, y=cum_dd,
                     mode="lines",
                     name=label,
                     line=dict(color=color, width=2),
+                    legendgroup=label,
+                    showlegend=False,
                     hovertemplate=(
                         f"<b>{label}</b><br>"
                         "경과: %{x}일<br>"
                         "누적낙폭: %{y:.1f}%<extra></extra>"
                     ),
-                ))
-                # 저점 마커
-                trough_pct = (float(_sp_raw.get(trough_dt,
-                              _sp_raw[_sp_raw.index <= trough_dt].iloc[-1]))
-                              / peak_val - 1) * 100
+                ), row=2, col=1)
+
+                # 저점 마커 (아래 패널)
+                trough_idx = min(range(len(days)), key=lambda k: cum_dd[k])
                 fig.add_trace(go.Scatter(
-                    x=[trough_day], y=[trough_pct],
+                    x=[days[trough_idx]], y=[cum_dd[trough_idx]],
                     mode="markers",
-                    marker=dict(color=color, size=9, symbol="circle",
+                    marker=dict(color=color, size=10, symbol="circle",
                                 line=dict(color="#ffffff", width=1.5)),
+                    legendgroup=label,
                     showlegend=False,
                     hovertemplate=(
                         f"<b>{label} 저점</b><br>"
-                        f"경과: {trough_day}일<br>"
-                        f"최대낙폭: {trough_pct:.1f}%<extra></extra>"
+                        f"경과: {days[trough_idx]}일<br>"
+                        f"최대낙폭: {cum_dd[trough_idx]:.1f}%<extra></extra>"
                     ),
-                ))
+                ), row=2, col=1)
 
-            # 기준선 (0%)
-            fig.add_hline(y=0, line=dict(color="#374151", width=1, dash="dot"))
-            # 저점 구분선
+            # 기준선
+            fig.add_hline(y=0, line=dict(color="#374151", width=1, dash="dot"), row=2, col=1)
+
+            # 저점 구분 수직선 (저점 이후 = 반등 구간)
             fig.add_vline(x=0, line=dict(color="#4b5563", width=1, dash="dot"))
 
             fig.update_layout(
                 template="plotly_dark",
                 paper_bgcolor="#0a0e1a",
                 plot_bgcolor="#111827",
-                height=420,
-                margin=dict(l=0, r=0, t=36, b=0),
+                height=560,
+                margin=dict(l=0, r=0, t=44, b=0),
                 title=dict(text=title, font=dict(size=13, color="#f1f5f9")),
-                legend=dict(orientation="h", y=1.06, x=0,
+                legend=dict(orientation="h", y=1.04, x=0,
                             font=dict(size=11), traceorder="normal"),
-                xaxis=dict(
-                    title=dict(text="고점 이후 경과일", font=dict(color="#6b7280", size=11)),
-                    showgrid=True, gridcolor="#1e2a3a",
-                    zeroline=True, zerolinecolor="#4b5563",
-                    tickfont=dict(size=10, color="#9ca3af"),
-                ),
-                yaxis=dict(
-                    title=dict(text="누적 낙폭 (%)", font=dict(color="#6b7280", size=11)),
-                    showgrid=True, gridcolor="#1e2a3a",
-                    ticksuffix="%", tickfont=dict(size=10),
-                ),
+                barmode="overlay",
                 hovermode="x unified",
             )
+            # 축 스타일
+            axis_style = dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10, color="#9ca3af"))
+            fig.update_xaxes(**axis_style)
+            fig.update_yaxes(**axis_style)
+            fig.update_yaxes(ticksuffix="%")
+            fig.update_xaxes(title_text="고점 이후 경과일", title_font=dict(color="#6b7280", size=10), row=2, col=1)
+            fig.update_yaxes(title_text="%/일", title_font=dict(color="#6b7280", size=10), row=1, col=1)
+            fig.update_yaxes(title_text="누적낙폭 %", title_font=dict(color="#6b7280", size=10), row=2, col=1)
+
+            # 서브플롯 제목 색상
+            for ann in fig.layout.annotations:
+                ann.font.color = "#6b7280"
+                ann.font.size  = 10
+
             return fig
 
         # 유형별 색상 팔레트
