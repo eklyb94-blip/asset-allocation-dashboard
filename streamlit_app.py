@@ -753,7 +753,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "📝 메모장"])
+    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "📝 메모장"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -2837,9 +2837,317 @@ def main():
                 render_digit_tab(key)
 
     # ════════════════════════════════════════
-    # TAB 7: 메모장
+    # TAB 7: 급락 패턴 분석
     # ════════════════════════════════════════
     with main_tab7:
+        st.markdown('<div class="section-title">⚡ 급락 패턴 분석 — 낙폭 속도와 이후 수익률</div>', unsafe_allow_html=True)
+        st.caption("역사적 하락 사이클을 '낙폭 속도' 기준으로 분류하고 저점 이후 수익률 패턴을 분석합니다 · S&P500 기준 (1970~현재)")
+
+        # ── 사이클 탐지 ──
+        @st.cache_data(ttl=3600)
+        def _detect_crash_cycles(prices_tuple):
+            px = pd.Series(dict(prices_tuple)).sort_index()
+            px.index = pd.to_datetime(px.index).tz_localize(None)
+            cycles = []
+            peak_date = px.index[0]; peak_val = float(px.iloc[0])
+            trough_date = px.index[0]; trough_val = float(px.iloc[0])
+            in_dd = False
+            for dt in px.index[1:]:
+                val = float(px[dt])
+                if not in_dd:
+                    if val > peak_val:
+                        peak_val = val; peak_date = dt
+                    elif (val - peak_val) / peak_val * 100 <= -10:
+                        in_dd = True; trough_date = dt; trough_val = val
+                else:
+                    if val < trough_val:
+                        trough_date = dt; trough_val = val
+                    if ((val-trough_val)/trough_val*100 >= 15 or
+                            (val-peak_val)/peak_val*100 >= -5):
+                        depth = (trough_val - peak_val) / peak_val * 100
+                        dur   = (trough_date - peak_date).days
+                        if depth <= -12:
+                            fwd = {}
+                            for m, d2 in [(1,21),(3,63),(6,126),(12,252)]:
+                                fi = px.index[px.index > trough_date]
+                                fwd[m] = round((float(px[fi[d2-1]])/trough_val-1)*100,1) if len(fi)>=d2 else None
+                            cycles.append({
+                                "고점일": peak_date, "저점일": trough_date,
+                                "기간(일)": dur, "최대낙폭(%)": round(depth,1),
+                                "낙폭속도(%/일)": round(abs(depth)/max(dur,1),3),
+                                "1M(%)": fwd[1], "3M(%)": fwd[3],
+                                "6M(%)": fwd[6], "12M(%)": fwd[12],
+                                "고점가": round(peak_val,1), "저점가": round(trough_val,1),
+                            })
+                        in_dd = False
+                        peak_val = val; peak_date = dt; trough_date = dt; trough_val = val
+            return pd.DataFrame(cycles)
+
+        _sp_raw = raw["sp500"].copy()
+        _sp_raw.index = pd.to_datetime(_sp_raw.index).tz_localize(None)
+        _sp_raw = _sp_raw.sort_index()
+        cyc = _detect_crash_cycles(tuple(_sp_raw.items()))
+
+        # ── 현재 S&P500 상태 계산 ──
+        _cur_val   = float(_sp_raw.iloc[-1])
+        _cur_ath   = float(_sp_raw.cummax().iloc[-1])
+        _cur_dd    = (_cur_val - _cur_ath) / _cur_ath * 100
+        _recent20  = _sp_raw.iloc[-21:]
+        _peak20    = float(_recent20.iloc[0])
+        _dd20      = min((_cur_val - _peak20) / _peak20 * 100, 0.0)
+        _speed20   = round(abs(_dd20) / 20, 3)
+
+        # 현재 하락 지속 기간
+        _ath_date = _sp_raw[_sp_raw == _cur_ath].index[-1]
+        _cur_dur  = (_sp_raw.index[-1] - _ath_date).days
+        _cur_speed_full = round(abs(_cur_dd) / max(_cur_dur, 1), 3) if _cur_dd <= -5 else 0.0
+
+        # ── 섹션 1: 현재 시장 상태 ──
+        _is_dd = _cur_dd <= -5
+        _dd_color  = "#f87171" if _cur_dd <= -20 else "#fbbf24" if _cur_dd <= -10 else "#34d399"
+        _spd_color = "#f87171" if _speed20 > 0.30 else "#fbbf24" if _speed20 > 0.15 else "#6b7280"
+
+        if _is_dd and _speed20 > 0.20:
+            _pattern = "빠른 급락 — V자 반등 패턴"
+            _pattern_color = "#f87171"
+            _exp_12m = "+30% 내외 (역사적 평균)"
+        elif _is_dd and _speed20 <= 0.20:
+            _pattern = "느린 하락 — 횡보·침체 주의"
+            _pattern_color = "#fbbf24"
+            _exp_12m = "+27% 내외 (역사적 평균)"
+        else:
+            _pattern = "정상 범위 (ATH -5% 이내)"
+            _pattern_color = "#34d399"
+            _exp_12m = "—"
+
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,#0d1117,#1a1f2e);'
+            f'border:1px solid #334155;border-radius:14px;padding:20px 28px;margin-bottom:20px;">'
+            f'<div style="color:#5b9bd5;font-size:11px;font-weight:700;letter-spacing:1.5px;margin-bottom:14px;">현재 S&P500 상태</div>'
+            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">'
+            f'<div><div style="color:#4b5563;font-size:10px;margin-bottom:4px;">ATH 대비 낙폭</div>'
+            f'<div style="color:{_dd_color};font-size:28px;font-weight:900;">{_cur_dd:+.1f}%</div></div>'
+            f'<div><div style="color:#4b5563;font-size:10px;margin-bottom:4px;">낙폭속도 (20일)</div>'
+            f'<div style="color:{_spd_color};font-size:28px;font-weight:900;">{_speed20:.3f}<span style="font-size:13px;">%/일</span></div></div>'
+            f'<div><div style="color:#4b5563;font-size:10px;margin-bottom:4px;">하락 지속일 (고점比)</div>'
+            f'<div style="color:#e2e8f0;font-size:28px;font-weight:900;">{_cur_dur}<span style="font-size:13px;">일</span></div></div>'
+            f'<div><div style="color:#4b5563;font-size:10px;margin-bottom:4px;">패턴 분류</div>'
+            f'<div style="color:{_pattern_color};font-size:15px;font-weight:700;margin-top:6px;">{_pattern}</div>'
+            f'<div style="color:#6b7280;font-size:11px;margin-top:4px;">역사적 12M 기대: {_exp_12m}</div></div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── 섹션 2: 요약 카드 (4개) ──
+        def _grp_stats(df_g):
+            r12 = [x for x in df_g["12M(%)"] if x is not None]
+            r6  = [x for x in df_g["6M(%)"]  if x is not None]
+            r1  = [x for x in df_g["1M(%)"]  if x is not None]
+            return {
+                "n": len(df_g),
+                "avg_depth": df_g["최대낙폭(%)"].mean(),
+                "avg_dur": df_g["기간(일)"].mean(),
+                "r1_avg": np.mean(r1) if r1 else 0,
+                "r6_avg": np.mean(r6) if r6 else 0,
+                "r12_avg": np.mean(r12) if r12 else 0,
+                "r12_pos": sum(x>0 for x in r12)/len(r12)*100 if r12 else 0,
+            }
+
+        fast = cyc[cyc["낙폭속도(%/일)"] > 0.20]
+        slow = cyc[cyc["낙폭속도(%/일)"] <= 0.20]
+        ultra= cyc[cyc["기간(일)"] <= 45]
+        gs   = _grp_stats(fast); gs2 = _grp_stats(slow); gs3 = _grp_stats(ultra)
+
+        st.markdown('<div class="section-title">패턴별 성과 요약</div>', unsafe_allow_html=True)
+        _sc1, _sc2, _sc3 = st.columns(3)
+        for _col, _title, _border, _gs, _desc in [
+            (_sc1, "초단기 급락 (0~45일)", "#f87171", gs3,  f"{gs3['n']}건 · 평균속도 {cyc[cyc['기간(일)']<=45]['낙폭속도(%/일)'].mean():.3f}%/일"),
+            (_sc2, "빠른 하락 (속도>0.20%/일)", "#fbbf24", gs,   f"{gs['n']}건 · 평균기간 {gs['avg_dur']:.0f}일"),
+            (_sc3, "느린 하락 (속도≤0.20%/일)", "#6366f1", gs2,  f"{gs2['n']}건 · 평균기간 {gs2['avg_dur']:.0f}일"),
+        ]:
+            with _col:
+                st.markdown(
+                    f'<div style="background:#111827;border:1.5px solid {_border};border-radius:12px;padding:18px;">'
+                    f'<div style="color:{_border};font-size:11px;font-weight:700;margin-bottom:4px;">{_title}</div>'
+                    f'<div style="color:#6b7280;font-size:10px;margin-bottom:14px;">{_desc}</div>'
+                    f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">'
+                    f'<div><div style="color:#4b5563;font-size:9px;">1개월</div>'
+                    f'<div style="color:#34d399;font-size:18px;font-weight:700;">{_gs["r1_avg"]:+.1f}%</div></div>'
+                    f'<div><div style="color:#4b5563;font-size:9px;">6개월</div>'
+                    f'<div style="color:#34d399;font-size:18px;font-weight:700;">{_gs["r6_avg"]:+.1f}%</div></div>'
+                    f'<div><div style="color:#4b5563;font-size:9px;">12개월</div>'
+                    f'<div style="color:#34d399;font-size:22px;font-weight:900;">{_gs["r12_avg"]:+.1f}%</div></div>'
+                    f'</div>'
+                    f'<div style="margin-top:10px;border-top:1px solid #1e2a3a;padding-top:8px;'
+                    f'color:#6b7280;font-size:10px;">12M 양수확률 '
+                    f'<span style="color:#34d399;font-weight:700;">{_gs["r12_pos"]:.0f}%</span></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── 섹션 3: 버블 차트 ──
+        st.markdown('<div class="section-title">하락 사이클 맵 — 기간 × 낙폭 × 속도 × 이후수익</div>', unsafe_allow_html=True)
+        st.caption("버블 크기 = 낙폭 속도(%/일)  ·  버블 색상 = 12개월 이후 수익률 (빨강→초록)  ·  각 버블 = 하나의 하락 사이클")
+
+        _valid = cyc.dropna(subset=["12M(%)"])
+        _r12_vals = _valid["12M(%)"].tolist()
+        _sizes    = [max(_valid["낙폭속도(%/일)"].iloc[i] * 280, 14) for i in range(len(_valid))]
+        _labels   = [str(_valid["고점일"].iloc[i].year) for i in range(len(_valid))]
+        _hover    = [
+            f"<b>{str(_valid['고점일'].iloc[i])[:10]} → {str(_valid['저점일'].iloc[i])[:10]}</b><br>"
+            f"기간: {_valid['기간(일)'].iloc[i]}일  |  낙폭: {_valid['최대낙폭(%)'].iloc[i]:.1f}%<br>"
+            f"속도: {_valid['낙폭속도(%/일)'].iloc[i]:.3f}%/일<br>"
+            f"─────────────<br>"
+            f"1M: {_valid['1M(%)'].iloc[i]:+.1f}%  3M: {_valid['3M(%)'].iloc[i]:+.1f}%<br>"
+            f"6M: {_valid['6M(%)'].iloc[i]:+.1f}%  12M: {_valid['12M(%)'].iloc[i]:+.1f}%"
+            for i in range(len(_valid))
+        ]
+
+        _fig_bubble = go.Figure()
+        _fig_bubble.add_trace(go.Scatter(
+            x=_valid["기간(일)"], y=_valid["최대낙폭(%)"],
+            mode="markers+text",
+            marker=dict(
+                size=_sizes, sizemode="area",
+                color=_r12_vals,
+                colorscale=[[0,"#991b1b"],[0.3,"#f87171"],[0.5,"#fbbf24"],[0.7,"#4ade80"],[1,"#16a34a"]],
+                colorbar=dict(
+                    title=dict(text="12M 수익%", font=dict(color="#9ca3af",size=10)),
+                    tickfont=dict(color="#9ca3af",size=9),
+                    thickness=12, len=0.7,
+                ),
+                cmin=-20, cmax=80,
+                line=dict(color="#1e2a3a", width=1),
+                opacity=0.85,
+            ),
+            text=_labels,
+            textposition="top center",
+            textfont=dict(color="#94a3b8", size=9),
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=_hover,
+            name="하락 사이클",
+        ))
+
+        # 현재 시장 위치 표시 (하락 중일 때만)
+        if _is_dd and _cur_dd <= -10:
+            _fig_bubble.add_trace(go.Scatter(
+                x=[_cur_dur], y=[_cur_dd],
+                mode="markers+text",
+                marker=dict(size=20, color="#ffffff", symbol="star",
+                            line=dict(color="#f87171", width=2)),
+                text=["현재"], textposition="top center",
+                textfont=dict(color="#ffffff", size=10, family="Arial Black"),
+                hovertemplate=f"<b>현재 시장</b><br>기간: {_cur_dur}일<br>낙폭: {_cur_dd:.1f}%<extra></extra>",
+                name="현재 위치",
+            ))
+
+        # 속도 임계선 (0.20%/일)
+        _x_max = max(_valid["기간(일)"].max() * 1.1, 700)
+        _thr_x = [i for i in range(0, int(_x_max), 10)]
+        _thr_y = [-0.20 * x for x in _thr_x]
+        _fig_bubble.add_trace(go.Scatter(
+            x=_thr_x, y=_thr_y, mode="lines",
+            line=dict(color="#fbbf24", width=1, dash="dot"),
+            hoverinfo="skip", showlegend=True, name="속도 0.20%/일 기준선",
+        ))
+        _fig_bubble.add_annotation(
+            x=180, y=-0.20*180, text="← 빠름 | 느림 →",
+            font=dict(color="#fbbf24", size=10), showarrow=False,
+            bgcolor="#111827", borderpad=3,
+        )
+
+        _fig_bubble.update_layout(
+            template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+            height=480, margin=dict(l=0,r=0,t=10,b=0),
+            xaxis=dict(title=dict(text="하락 지속 기간 (일)", font=dict(color="#6b7280",size=11)),
+                       showgrid=True, gridcolor="#1e2a3a", range=[0, _x_max]),
+            yaxis=dict(title=dict(text="최대 낙폭 (%)", font=dict(color="#6b7280",size=11)),
+                       showgrid=True, gridcolor="#1e2a3a"),
+            legend=dict(orientation="h", y=1.04, x=0, font=dict(size=10)),
+            hovermode="closest",
+        )
+        st.plotly_chart(_fig_bubble, use_container_width=True)
+
+        # ── 섹션 4: 기간별 수익률 바 차트 ──
+        st.markdown('<div class="section-title">기간별 그룹 수익률 비교</div>', unsafe_allow_html=True)
+        _bins = [
+            ("초단기\n(0~45일)",   cyc[cyc["기간(일)"] <= 45]),
+            ("단기\n(45~120일)",   cyc[(cyc["기간(일)"]>45)&(cyc["기간(일)"]<=120)]),
+            ("중기\n(120~300일)",  cyc[(cyc["기간(일)"]>120)&(cyc["기간(일)"]<=300)]),
+            ("장기\n(300일+)",     cyc[cyc["기간(일)"] > 300]),
+        ]
+        _bar_labels = [b[0] for b in _bins]
+        _bar_1m  = [np.mean([x for x in b[1]["1M(%)"]  if x is not None]) if len(b[1])>0 else 0 for b in _bins]
+        _bar_3m  = [np.mean([x for x in b[1]["3M(%)"]  if x is not None]) if len(b[1])>0 else 0 for b in _bins]
+        _bar_6m  = [np.mean([x for x in b[1]["6M(%)"]  if x is not None]) if len(b[1])>0 else 0 for b in _bins]
+        _bar_12m = [np.mean([x for x in b[1]["12M(%)"] if x is not None]) if len(b[1])>0 else 0 for b in _bins]
+        _bar_n   = [len(b[1]) for b in _bins]
+
+        _fig_bar = go.Figure()
+        for _vals, _name, _color in [
+            (_bar_1m,  "1개월",  "#6366f1"),
+            (_bar_3m,  "3개월",  "#5b9bd5"),
+            (_bar_6m,  "6개월",  "#22c55e"),
+            (_bar_12m, "12개월", "#f59e0b"),
+        ]:
+            _fig_bar.add_trace(go.Bar(
+                x=[f"{_bar_labels[i]}\n({_bar_n[i]}건)" for i in range(len(_bar_labels))],
+                y=_vals, name=_name,
+                marker_color=_color,
+                text=[f"{v:+.1f}%" for v in _vals],
+                textposition="outside",
+                textfont=dict(size=10, color="#d1d5db"),
+            ))
+
+        _fig_bar.update_layout(
+            template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+            height=340, margin=dict(l=0,r=0,t=20,b=0),
+            barmode="group", bargap=0.25, bargroupgap=0.08,
+            legend=dict(orientation="h", y=1.05, x=0, font=dict(size=11)),
+            xaxis=dict(showgrid=False, tickfont=dict(size=10, color="#9ca3af")),
+            yaxis=dict(showgrid=True, gridcolor="#1e2a3a", ticksuffix="%",
+                       tickfont=dict(size=10)),
+        )
+        st.plotly_chart(_fig_bar, use_container_width=True)
+
+        # ── 섹션 5: 상세 테이블 ──
+        st.markdown('<div class="section-title">역대 하락 사이클 상세</div>', unsafe_allow_html=True)
+        _disp = cyc.copy()
+        _disp["고점일"] = _disp["고점일"].dt.strftime("%Y-%m-%d")
+        _disp["저점일"] = _disp["저점일"].dt.strftime("%Y-%m-%d")
+        _disp["유형"] = _disp["낙폭속도(%/일)"].apply(
+            lambda s: "초단기급락" if s > 0.40 else ("빠른하락" if s > 0.20 else "느린하락")
+        )
+        _disp = _disp[["고점일","저점일","기간(일)","최대낙폭(%)","낙폭속도(%/일)","유형","1M(%)","3M(%)","6M(%)","12M(%)"]].sort_values("고점일", ascending=False).reset_index(drop=True)
+
+        def _style_crash_table(df):
+            def _c(val):
+                col = df.columns[list(df.columns).index(df.columns[list(df.iloc[0]).index(val)])] if val in list(df.iloc[0]) else ""
+                if isinstance(val, float):
+                    if val >= 30: return "color:#16a34a;font-weight:700"
+                    if val >= 10: return "color:#34d399"
+                    if val >= 0:  return "color:#86efac"
+                    if val >= -20: return "color:#fbbf24"
+                    return "color:#f87171;font-weight:700"
+                if isinstance(val, str):
+                    if "초단기" in str(val): return "color:#f87171;font-weight:700"
+                    if "빠른"  in str(val): return "color:#fbbf24;font-weight:600"
+                    if "느린"  in str(val): return "color:#6b7280"
+                return "color:#d1d5db"
+            return df.style.map(_c)
+
+        st.dataframe(_style_crash_table(_disp), use_container_width=True, height=480, hide_index=True)
+
+        st.markdown(
+            '<div class="footer-txt">낙폭속도 = 최대낙폭(%) ÷ 하락기간(일) · '
+            '기준선 0.20%/일 초과 = 빠른 하락 · 저점 판단은 사후적 기준 · 과거 성과가 미래를 보장하지 않습니다</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ════════════════════════════════════════
+    # TAB 8: 메모장
+    # ════════════════════════════════════════
+    with main_tab8:
         MEMO_FILE = pathlib.Path(__file__).parent / "memo.txt"
 
         _DEFAULT_MEMO = """\
