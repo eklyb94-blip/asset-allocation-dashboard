@@ -120,7 +120,6 @@ def load_raw():
         "nasdaq": ("^IXIC",     "1985-01-01", "NASDAQ"),
         "dow":    ("^DJI",      "1985-01-01", "DOW"),
         "kosdaq": ("^KQ11",     "1997-01-01", "KOSDAQ"),
-        "gold":   ("GC=F",      "2000-01-01", "GOLD"),
         "us30y":  ("^TYX",      "1985-01-01", "US30Y"),
         "krbond": ("114820.KS", "2009-01-01", "KRBOND"),
     }
@@ -195,11 +194,39 @@ def load_raw():
             # 로컬 CSV 없으면 yfinance 폴백 (1985~)
             return dl("^GSPC", "1985-01-01", "SP500")
 
+    def load_gold():
+        """gold_history.csv(1970~) + yfinance 최신 데이터 병합"""
+        GOLD_CSV = pathlib.Path(__file__).parent / "gold_history.csv"
+        try:
+            hist = pd.read_csv(GOLD_CSV, parse_dates=["Date"], index_col="Date")
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            s_hist = hist["Close"].dropna().sort_index()
+            s_hist = s_hist[s_hist.index >= "1970-01-01"]
+            last_date = s_hist.index[-1]
+            yf_start  = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            try:
+                yf_df = yf.download("GC=F", start=yf_start, auto_adjust=True,
+                                    progress=False, multi_level_index=False)
+                if isinstance(yf_df.columns, pd.MultiIndex):
+                    yf_df.columns = yf_df.columns.get_level_values(0)
+                if not yf_df.empty and "Close" in yf_df.columns:
+                    s_yf = yf_df["Close"].dropna()
+                    s_yf.index = pd.to_datetime(s_yf.index).tz_localize(None)
+                    combined = pd.concat([s_hist, s_yf])
+                    combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+                    return combined, False
+            except Exception:
+                pass
+            return s_hist, False
+        except Exception:
+            return dl("GC=F", "2000-01-01", "GOLD")
+
     results, offline_flags = {}, {}
     for key, (ticker, start, csv_name) in _ticker_map.items():
         results[key], offline_flags[key] = dl(ticker, start, csv_name)
     results["kospi"], offline_flags["kospi"] = load_kospi()
     results["sp500"], offline_flags["sp500"] = load_sp500()
+    results["gold"],  offline_flags["gold"]  = load_gold()
 
     # 오프라인 여부를 session_state에 기록 (UI 배너용)
     is_offline = any(offline_flags.values())
