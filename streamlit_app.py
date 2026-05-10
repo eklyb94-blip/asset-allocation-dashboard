@@ -755,13 +755,13 @@ def main():
             m = meta[key]
             c1, c2, c3, c4 = st.columns(4)
             items = [
-                ("주식",      cur[key]["stock"]),
-                ("금",        cur[key]["gold"]),
-                (m["bond"],   cur[key]["bond"]),
-                ("포트폴리오", cur[key]["port"]),
+                ("주식",           cur[key]["stock"]),
+                ("금",             cur[key]["gold"]),
+                (m["bond"],        cur[key]["bond"]),
+                ("포트폴리오(전략7)", cur[key]["port"]),
             ]
             for col, (label, val) in zip([c1, c2, c3, c4], items):
-                is_port = label == "포트폴리오"
+                is_port = label == "포트폴리오(전략7)"
                 with col:
                     bc  = "#1e3a2a" if is_port else "#1e2a3a"
                     vc  = clr(val)
@@ -784,8 +784,52 @@ def main():
         # ── 4. 누적 성과 차트 ──
         st.markdown('<div class="section-title">📊 누적 성과 차트</div>', unsafe_allow_html=True)
 
-        def make_perf_chart(sim_df, title, accent):
-            if sim_df.empty or "전략6" not in sim_df.columns:
+        def _s7_series_for_chart(key):
+            """전략7 일별 포트폴리오 → 주별 리샘플 (차트용)"""
+            sim = sims.get(key, pd.DataFrame())
+            if sim.empty: return pd.Series(dtype=float)
+            bond_key = "krbond" if key in ("kospi","kosdaq") else "us30y"
+            d_stk = raw[key].pct_change().dropna()
+            d_gld = raw["gold"].pct_change().dropna()
+            d_bnd = (-DURATION_US*raw["us30y"].diff()/100).dropna() if bond_key=="us30y" \
+                    else raw["krbond"].pct_change().dropna()
+            for s in [d_stk, d_gld, d_bnd]:
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+            px = raw[key].copy(); px.index = pd.to_datetime(px.index).tz_localize(None)
+            dl = px.diff()
+            rsi = 100 - 100/(1+dl.clip(lower=0).rolling(14).mean() /
+                              (-dl.clip(upper=0)).rolling(14).mean().replace(0,np.nan))
+            ma200=px.rolling(200).mean(); mag=(px-ma200)/ma200*100
+            ma20=px.rolling(20).mean(); s20=px.rolling(20).std()
+            bbr=(ma20+2*s20)-(ma20-2*s20)
+            bbp=(px-(ma20-2*s20))/bbr.replace(0,np.nan)*100
+            dd=(px-px.cummax())/px.cummax()*100
+            if key in ("kospi","kosdaq"):
+                sv=(px.pct_change().rolling(20).std()*(252**0.5)*100>=35).astype(int)
+            else:
+                vh=load_vix_history(); vh.index=pd.to_datetime(vh.index).tz_localize(None)
+                sv=(vh.reindex(px.index,method="ffill").fillna(20)>=40).astype(int)
+            sig=((dd<=-30).astype(int)+(rsi<=30).astype(int)+
+                 (mag<=-15).astype(int)+(bbp<=0).astype(int)+sv).fillna(0).to_dict()
+            im={(int(r["연도"]),r["시즌"]):bool(r["투자"]) for _,r in sim.iterrows()}
+            v=100.0; vals=[]; dates=[]; sell=False
+            gi=set(d_gld.index); bi=set(d_bnd.index)
+            for dt in d_stk.index:
+                mo=dt.month
+                if mo>=11: sea,sy="Nov-Apr",dt.year
+                elif mo<=4: sea,sy="Nov-Apr",dt.year-1
+                else: sea,sy="May-Oct",dt.year
+                inv=im.get((sy,sea),False)
+                rs=float(d_stk[dt]); rg=float(d_gld[dt]) if dt in gi else 0; rb=float(d_bnd[dt]) if dt in bi else 0
+                s=float(sig.get(dt,0))
+                if s>=2: sell=True
+                elif s==0: sell=False
+                w=0 if sell else (0.5 if inv else 0.25)
+                v*=(1+w*rs+0.25*rg+0.25*rb); vals.append(v); dates.append(dt)
+            return pd.Series(vals, index=dates).resample("W").last()
+
+        def make_perf_chart(sim_df, title, accent, s7_series=None):
+            if sim_df.empty:
                 fig = go.Figure()
                 fig.update_layout(
                     template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
@@ -795,20 +839,28 @@ def main():
                                       font=dict(color="#9ca3af", size=14))],
                 )
                 return fig
-            x = [f"{r['연도']}-{r['시즌'][:3]}" for _, r in sim_df.iterrows()]
-            cfg = [
-                ("전략6",   "전략6 포트폴리오",    accent, 3),
-                ("BH_min",  "BH_min (주식25%고정)", "#6b7280", 1.5),
-                ("BH_max",  "BH_max (주식50%고정)", "#a3a3a3", 1.5),
-                ("주식단독", "주식단독 (끝자리전략)", "#fbbf24", 1.5),
-            ]
             fig = go.Figure()
-            for col, name, c, w in cfg:
+            # 전략7 (일별→주별)
+            if s7_series is not None and not s7_series.empty:
                 fig.add_trace(go.Scatter(
-                    x=x, y=sim_df[col], name=name, mode="lines",
-                    line=dict(color=c, width=w),
-                    hovertemplate=f"<b>{name}</b><br>%{{x}}<br>%{{y:.1f}}<extra></extra>",
+                    x=s7_series.index, y=s7_series.values,
+                    name="전략7 포트폴리오", mode="lines",
+                    line=dict(color=accent, width=3),
+                    hovertemplate="<b>전략7</b><br>%{x|%Y-%m-%d}<br>%{y:.1f}<extra></extra>",
                 ))
+            # 비교 전략 (반기별)
+            x = [f"{r['연도']}-{r['시즌'][:3]}" for _, r in sim_df.iterrows()]
+            for col, name, c, w in [
+                ("BH_max",  "주식50% BH", "#6b7280", 1.5),
+                ("BH_min",  "주식25% BH", "#4b5563", 1.5),
+                ("주식단독", "주식단독",   "#fbbf24", 1.5),
+            ]:
+                if col in sim_df.columns:
+                    fig.add_trace(go.Scatter(
+                        x=x, y=sim_df[col], name=name, mode="lines",
+                        line=dict(color=c, width=w),
+                        hovertemplate=f"<b>{name}</b><br>%{{x}}<br>%{{y:.1f}}<extra></extra>",
+                    ))
             fig.update_layout(
                 template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
                 title=dict(text=title, font=dict(size=14, color="#f1f5f9")),
@@ -827,7 +879,8 @@ def main():
                 st.plotly_chart(
                     make_perf_chart(sims[key],
                                     f"{m['name']} 자산배분 포트폴리오 누적성과 (시작=100)",
-                                    m["color"]),
+                                    m["color"],
+                                    s7_series=_s7_series_for_chart(key)),
                     use_container_width=True,
                 )
 
