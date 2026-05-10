@@ -3158,6 +3158,103 @@ def main():
                 f'</div>'
             )
 
+        # ── N일차 평균 낙폭속도 꺾은선 차트 ──
+        def _avg_speed_chart(df_group, group_color):
+            """
+            각 사이클의 N일차 일별 수익률을 수집 → N일차 평균 계산 → 꺾은선
+            개별 사이클(얇은선) + 평균(굵은선) 겹쳐 표시
+            """
+            # ── 사이클별 거래일 기준 일별 수익률 수집 ──
+            daily_by_day = {}   # {day_num: [ret_cycle1, ret_cycle2, ...]}
+            cycle_data   = {}   # {label: {day_num: ret}}
+
+            for _, row in df_group.iterrows():
+                peak_dt   = pd.Timestamp(row["고점일"])
+                trough_dt = pd.Timestamp(row["저점일"])
+                _seg = _sp_raw[(_sp_raw.index >= peak_dt) & (_sp_raw.index <= trough_dt)]
+                if len(_seg) < 2:
+                    continue
+                label = row["고점일"][:7]
+                cycle_data[label] = {}
+                for j in range(1, len(_seg)):
+                    ret = (float(_seg.iloc[j]) / float(_seg.iloc[j-1]) - 1) * 100
+                    cycle_data[label][j] = ret
+                    daily_by_day.setdefault(j, []).append(ret)
+
+            if not daily_by_day:
+                return go.Figure()
+
+            avg_days = sorted(daily_by_day.keys())
+            avg_vals = [np.mean(daily_by_day[d]) for d in avg_days]
+            # 평균 기준 최대 하락일
+            peak_avg_day = avg_days[int(np.argmin(avg_vals))]
+
+            fig = go.Figure()
+
+            # ── 개별 사이클 (얇고 반투명) ──
+            colors_ind = ["#f87171","#fb923c","#fbbf24","#a78bfa","#60a5fa",
+                          "#34d399","#f472b6","#5b9bd5","#22c55e","#e879f9"]
+            for ci, (label, ddata) in enumerate(cycle_data.items()):
+                xs = sorted(ddata.keys())
+                ys = [ddata[x] for x in xs]
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys,
+                    mode="lines",
+                    name=label,
+                    line=dict(color=colors_ind[ci % len(colors_ind)], width=1.2),
+                    opacity=0.45,
+                    hovertemplate=f"<b>{label}</b><br>%{{x}}일차: %{{y:.2f}}%<extra></extra>",
+                ))
+
+            # ── 평균선 (굵고 선명) ──
+            fig.add_trace(go.Scatter(
+                x=avg_days, y=avg_vals,
+                mode="lines+markers",
+                name="■ 평균",
+                line=dict(color=group_color, width=3),
+                marker=dict(size=5, color=group_color),
+                hovertemplate="<b>평균</b><br>%{x}일차: %{y:.2f}%<extra></extra>",
+            ))
+
+            # 0% 기준선
+            fig.add_hline(y=0, line=dict(color="#374151", width=1, dash="dot"))
+
+            # 평균 최대낙폭 날짜 수직선
+            fig.add_vline(
+                x=peak_avg_day,
+                line=dict(color=group_color, width=1.5, dash="dash"),
+                annotation_text=f"평균 최대낙폭일 ({peak_avg_day}일차)",
+                annotation_font=dict(color=group_color, size=10),
+                annotation_position="top right",
+            )
+
+            fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#0a0e1a",
+                plot_bgcolor="#111827",
+                height=400,
+                margin=dict(l=0, r=0, t=40, b=0),
+                title=dict(
+                    text="N일차 평균 낙폭속도 — 얇은선: 개별 사이클 / 굵은선: 전체 평균",
+                    font=dict(size=12, color="#f1f5f9"),
+                ),
+                legend=dict(orientation="h", y=1.06, x=0, font=dict(size=10)),
+                hovermode="x unified",
+                xaxis=dict(
+                    title=dict(text="고점 이후 거래일 (N일차)", font=dict(color="#6b7280", size=10)),
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickfont=dict(size=10, color="#9ca3af"),
+                    dtick=2,
+                ),
+                yaxis=dict(
+                    title=dict(text="일별 낙폭률 (%)", font=dict(color="#6b7280", size=10)),
+                    showgrid=True, gridcolor="#1e2a3a",
+                    ticksuffix="%", tickfont=dict(size=10),
+                    zeroline=True, zerolinecolor="#374151",
+                ),
+            )
+            return fig
+
         # ── 일별 낙폭 속도 + 누적 이중 패널 차트 ──
         def _path_chart(df_group, title, line_color_list, show_days=120):
             """
@@ -3295,20 +3392,26 @@ def main():
             "🟡 빠른하락 (0.20~0.40%/일)",
             "🔵 느린하락 (속도≤0.20%/일)",
         ])
-        for _ctab, _label, _mask, _colors, _show in [
-            (_ct1, "초단기급락", _disp["유형"] == "초단기급락", _colors_ultra, 90),
-            (_ct2, "빠른하락",   _disp["유형"] == "빠른하락",   _colors_fast,  120),
-            (_ct3, "느린하락",   _disp["유형"] == "느린하락",   _colors_slow,  180),
+        for _ctab, _label, _mask, _colors, _show, _avg_color in [
+            (_ct1, "초단기급락", _disp["유형"] == "초단기급락", _colors_ultra, 90,  "#f87171"),
+            (_ct2, "빠른하락",   _disp["유형"] == "빠른하락",   _colors_fast,  120, "#fbbf24"),
+            (_ct3, "느린하락",   _disp["유형"] == "느린하락",   _colors_slow,  180, "#6366f1"),
         ]:
             with _ctab:
                 _sub = _disp[_mask].reset_index(drop=True)
                 st.markdown(_tbl_summary(_sub), unsafe_allow_html=True)
 
-                # 낙폭 경로 차트
+                # ① N일차 평균 낙폭속도 꺾은선
+                st.plotly_chart(
+                    _avg_speed_chart(_sub, _avg_color),
+                    use_container_width=True,
+                )
+
+                # ② 누적 낙폭 경로 (기존)
                 st.plotly_chart(
                     _path_chart(
                         _sub,
-                        f"{_label} — 고점 기준 일별 누적 낙폭 경로 (원 = 저점, 이후는 반등 추이)",
+                        f"{_label} — 고점 기준 누적 낙폭 경로 (● = 저점)",
                         _colors,
                         show_days=_show,
                     ),
