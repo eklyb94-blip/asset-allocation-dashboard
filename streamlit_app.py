@@ -3829,8 +3829,8 @@ def main():
             pivot = pivot.sort_index(ascending=False)
 
             MN = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월","연간"]
-            th = "background:#1e2a3a;padding:4px 6px;text-align:center;color:#9ca3af;font-size:11px;font-weight:700"
-            td_b = "padding:3px 5px;text-align:center;font-size:11px"
+            th = "background:#1e2a3a;padding:6px 6px;text-align:center;color:#9ca3af;font-size:13px;font-weight:700"
+            td_b = "padding:7px 5px;text-align:center;font-size:14px"
 
             def _sty(v, scale=10):
                 if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -3848,8 +3848,8 @@ def main():
                 html += f'<th style="{th}">{nm}</th>'
             html += '</tr>'
             for y in pivot.index:
-                html += (f'<tr><td style="background:#111827;padding:3px 6px;'
-                         f'color:#f1f5f9;font-weight:700;font-size:11px">{y}</td>')
+                html += (f'<tr><td style="background:#111827;padding:7px 6px;'
+                         f'color:#f1f5f9;font-weight:700;font-size:14px">{y}</td>')
                 for m in range(1, 13):
                     val = None
                     if m in pivot.columns:
@@ -3902,12 +3902,10 @@ def main():
             ko_imap = _inv_map("kospi")
             cs_imap = _inv_map("csi300")
 
-            cols = ["전략8_KODEX", "BH_max", "BH_min"]
+            cols = ["전략8_KODEX", "SP500", "KOSPI"]
             v = {c: 100.0 for c in cols}
             vals = {c: [] for c in cols}
             dates = []
-            bm_stk, bm_gld, bm_bnd = 50.0, 25.0, 25.0
-            bl_stk, bl_gld, bl_bnd, bl_csh = 25.0, 25.0, 25.0, 25.0
             prev_sk = None
 
             for dt in d_sp.index:
@@ -3933,23 +3931,14 @@ def main():
                 w_sp = 0.10; w_nq = 0.10 if sp_inv else 0.0
                 w_ko = 0.10; w_kq = 0.10 if ko_inv else 0.0
                 w_cs = 0.20 if cs_inv else 0.10
-
-                if sk != prev_sk and prev_sk is not None:
-                    tot = bm_stk + bm_gld + bm_bnd
-                    bm_stk, bm_gld, bm_bnd = tot*0.50, tot*0.25, tot*0.25
-                    tot2 = bl_stk + bl_gld + bl_bnd + bl_csh
-                    bl_stk = bl_gld = bl_bnd = bl_csh = tot2*0.25
                 prev_sk = sk
 
                 w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
                 r_pf = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
                         + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us + w_cash*r_kr)
                 v["전략8_KODEX"] *= (1 + r_pf)
-
-                bm_stk *= (1+r_sp); bm_gld *= (1+r_g); bm_bnd *= (1+r_us)
-                bl_stk *= (1+r_sp); bl_gld *= (1+r_g); bl_bnd *= (1+r_us)
-                v["BH_max"] = bm_stk + bm_gld + bm_bnd
-                v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
+                v["SP500"] *= (1 + r_sp)
+                v["KOSPI"] *= (1 + r_ko)
 
                 for c in cols:
                     vals[c].append(v[c])
@@ -4011,8 +4000,8 @@ def main():
               <div style="color:#34d399;font-size:20px;font-weight:900;">{total_stk8}%</div>
             </div>
             <div>
-              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">현금(국고채3년) 비중</div>
-              <div style="color:#fb923c;font-size:20px;font-weight:900;">{int(w_cash8*100)}%</div>
+              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">국고채3년 비중 (채권+현금)</div>
+              <div style="color:#fb923c;font-size:20px;font-weight:900;">{int((0.10+w_cash8)*100)}%</div>
             </div>
           </div>
         </div>
@@ -4051,10 +4040,12 @@ def main():
             ("🇰🇷 KODEX 200",                   "069500", w_ko8,   "KOSPI 투자시즌" if ko_inv8 else "─",               True),
             ("📱 KODEX 코스닥150",               "229200", w_kq8,   "KOSPI 투자시즌 추가" if ko_inv8 else "비투자 (0%)", ko_inv8),
             ("🇨🇳 KODEX 차이나CSI300",          "168580", w_cs8,   "CSI300 투자시즌 20%" if cs_inv8 else "비투자 10%",  True),
-            ("🥇 ACE KRX금현물",                "411060", 0.20,    "고정 20%",                                         True),
-            ("🏦 KODEX 국고채3년",              "114820", 0.10,    "고정 10%",                                         True),
-            ("🌐 KODEX 미국10년국채선물",        "304660", 0.10,    "고정 10%",                                         True),
-            ("💵 KODEX 국고채3년 (현금대체)",   "114820", w_cash8, "잔여 현금 운용",                                   w_cash8 > 0.001),
+            ("🥇 ACE KRX금현물",             "411060", 0.20,
+             "고정 20%", True),
+            ("🏦 KODEX 국고채3년",           "114820", round(0.10 + w_cash8, 4),
+             f"채권 10% + 현금대체 {int(w_cash8*100)}%", True),
+            ("🌐 KODEX 미국10년국채선물",     "304660", 0.10,
+             "고정 10%", True),
         ]
         th_s = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
                 "font-size:11px;font-weight:700")
@@ -4081,14 +4072,13 @@ def main():
             )
         t_html += '</table>'
         st.markdown(t_html, unsafe_allow_html=True)
-        st.caption("※ KODEX 국고채3년(114820)은 한국채권 고정 10% + 현금 대체 운용에 중복 사용됩니다.")
 
         st.markdown("---")
 
         # ════════════════════
         # 서브탭: 과거 백테스트 | KODEX 실거래
         # ════════════════════
-        stab_hist, stab_kodex = st.tabs(["📈 과거 백테스트 (장기 지수)", "🏦 KODEX 실거래 (2021~)"])
+        stab_kodex, stab_hist = st.tabs(["🏦 KODEX 실거래 (2021~)", "📈 과거 백테스트 (장기 지수)"])
 
         with stab_hist:
             fee8 = st.session_state.get("applied_fee", 0.0)
@@ -4096,11 +4086,22 @@ def main():
             if not pf_h:
                 st.warning("데이터 없음")
             else:
-                s8_h = pf_h["전략8"]; bx_h = pf_h["BH_max"]; bn_h = pf_h["BH_min"]
-                c8, g8, m8 = _stats(s8_h)
-                cx, gx, mx = _stats(bx_h)
-                cn, gn, mn = _stats(bn_h)
+                s8_h = pf_h["전략8"]
                 y0h = s8_h.index[0].year; y1h = s8_h.index[-1].year
+
+                # SP500 / KOSPI 벤치마크 (시작=100 리베이스)
+                def _rebase(key, start_dt):
+                    s = raw[key].copy()
+                    s.index = pd.to_datetime(s.index).tz_localize(None)
+                    s = s[s.index >= start_dt].dropna()
+                    return s / s.iloc[0] * 100 if len(s) > 0 else pd.Series(dtype=float)
+
+                sp_bh = _rebase("sp500", s8_h.index[0])
+                ko_bh = _rebase("kospi", s8_h.index[0])
+
+                c8, g8, m8 = _stats(s8_h)
+                cs_, gs_, ms_ = _stats(sp_bh)
+                ck_, gk_, mk_ = _stats(ko_bh)
 
                 c1h, c2h, c3h = st.columns(3)
                 with c1h:
@@ -4110,22 +4111,22 @@ def main():
                         unsafe_allow_html=True)
                 with c2h:
                     st.markdown(
-                        _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", cx, gx, mx),
+                        _card_html("🇺🇸 S&P500 BH", "#0d0d20", "#6366f1", cs_, gs_, ms_),
                         unsafe_allow_html=True)
                 with c3h:
                     st.markdown(
-                        _card_html("📊 주식25% BH", "#111827", "#6b7280", cn, gn, mn),
+                        _card_html("🇰🇷 KOSPI BH", "#111827", "#22c55e", ck_, gk_, mk_),
                         unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
                 fig_h = go.Figure()
-                for col_h, nm_h, clr_h, w_h in [
-                    ("전략8",  "🌏 전략8",     "#38bdf8", 2.5),
-                    ("BH_max", "📈 주식50%BH", "#6366f1", 1.0),
-                    ("BH_min", "📊 주식25%BH", "#6b7280", 1.0),
+                for s_plot, nm_h, clr_h, w_h in [
+                    (s8_h,  "🌏 전략8",    "#38bdf8", 2.5),
+                    (sp_bh, "🇺🇸 S&P500", "#6366f1", 1.0),
+                    (ko_bh, "🇰🇷 KOSPI",  "#22c55e", 1.0),
                 ]:
-                    sh = pf_h[col_h].resample("W").last()
+                    sh = s_plot.resample("W").last()
                     fig_h.add_trace(go.Scatter(
                         x=sh.index, y=sh.values, name=nm_h, mode="lines",
                         line=dict(color=clr_h, width=w_h),
@@ -4156,10 +4157,12 @@ def main():
             if not pf_k:
                 st.warning("KODEX ETF 데이터를 불러올 수 없습니다. 네트워크를 확인해 주세요.")
             else:
-                s8_k = pf_k["전략8_KODEX"]; bx_k = pf_k["BH_max"]; bn_k = pf_k["BH_min"]
-                ck, gk, mk = _stats(s8_k)
-                cx2, gx2, mx2 = _stats(bx_k)
-                cn2, gn2, mn2 = _stats(bn_k)
+                s8_k = pf_k["전략8_KODEX"]
+                sp_k = pf_k["SP500"]
+                ko_k = pf_k["KOSPI"]
+                ck, gk, mk   = _stats(s8_k)
+                csp, gsp, msp = _stats(sp_k)
+                cko, gko, mko = _stats(ko_k)
                 y0k = s8_k.index[0].strftime("%Y-%m")
                 y1k = s8_k.index[-1].strftime("%Y-%m")
 
@@ -4171,25 +4174,27 @@ def main():
                         unsafe_allow_html=True)
                 with c2k:
                     st.markdown(
-                        _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", cx2, gx2, mx2),
+                        _card_html("🇺🇸 S&P500 BH (KODEX)", "#0d0d20", "#6366f1",
+                                   csp, gsp, msp),
                         unsafe_allow_html=True)
                 with c3k:
                     st.markdown(
-                        _card_html("📊 주식25% BH", "#111827", "#6b7280", cn2, gn2, mn2),
+                        _card_html("🇰🇷 KOSPI BH (KODEX)", "#111827", "#22c55e",
+                                   cko, gko, mko),
                         unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.caption(
                     f"📌 KODEX/ACE ETF 실제 가격 기반 · {y0k} ~ {y1k} · 전략8 동일 로직 적용 "
-                    f"· BH 기준: KODEX 미국S&P500(주식) + ACE KRX금현물(금) + KODEX 미국10년국채선물(채권)")
+                    f"· 벤치마크: KODEX 미국S&P500(379800) / KODEX 200(069500)")
 
                 fig_k = go.Figure()
-                for col_k, nm_k, clr_k, w_k in [
-                    ("전략8_KODEX", "🏦 전략8 KODEX", "#38bdf8", 2.5),
-                    ("BH_max",      "📈 주식50% BH",  "#6366f1", 1.0),
-                    ("BH_min",      "📊 주식25% BH",  "#6b7280", 1.0),
+                for s_k, nm_k, clr_k, w_k in [
+                    (s8_k, "🏦 전략8 KODEX", "#38bdf8", 2.5),
+                    (sp_k, "🇺🇸 S&P500",    "#6366f1", 1.0),
+                    (ko_k, "🇰🇷 KOSPI",     "#22c55e", 1.0),
                 ]:
-                    sk_s = pf_k[col_k]
+                    sk_s = s_k
                     fig_k.add_trace(go.Scatter(
                         x=sk_s.index, y=sk_s.values, name=nm_k, mode="lines",
                         line=dict(color=clr_k, width=w_k),
