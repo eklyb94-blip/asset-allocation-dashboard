@@ -519,6 +519,81 @@ def compute_strategy():
         return pd.DataFrame(records)
 
     sims = {k: simulate(k) for k in ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]}
+
+    # ── 전략8: SP500 + KOSPI + CSI300 3지수 동적 비중 ──
+    def simulate_s8():
+        sp_info = strategies["sp500"]
+        ko_info = strategies["kospi"]
+        cs_info = strategies["csi300"]
+
+        sp_na, sp_mo = seas["sp500"]
+        ko_na, ko_mo = seas["kospi"]
+        cs_na, cs_mo = seas["csi300"]
+        kr_na, kr_mo = seas["krbond"]
+        us_na, us_mo = seas["us30y"]
+        g_na,  g_mo  = seas["gold"]
+
+        records = []
+        v_s8 = v_bhmax = v_bhmin = 100.0
+
+        for y in sorted(set(sp_na.index) | set(sp_mo.index)):
+            digit = y % 10
+            for season, sp_df, ko_df, cs_df, kr_df, us_df, gdf, sp_inv_set, ko_inv_set, cs_inv_set in [
+                ("Nov-Apr", sp_na, ko_na, cs_na, kr_na, us_na, g_na,
+                 sp_info["inv_na"], ko_info["inv_na"], cs_info["inv_na"]),
+                ("May-Oct", sp_mo, ko_mo, cs_mo, kr_mo, us_mo, g_mo,
+                 sp_info["inv_mo"], ko_info["inv_mo"], cs_info["inv_mo"]),
+            ]:
+                if y not in sp_df.index: continue
+                if y not in gdf.index:   continue
+                if y not in us_df.index: continue
+
+                r_sp = float(sp_df.loc[y, "ret"])
+                r_ko = float(ko_df.loc[y, "ret"]) if y in ko_df.index else r_sp
+                r_cs = float(cs_df.loc[y, "ret"]) if y in cs_df.index else r_sp
+                r_g  = float(gdf.loc[y, "ret"])
+                r_kr = float(kr_df.loc[y, "ret"]) if y in kr_df.index else 0.0
+                r_us = float(us_df.loc[y, "ret"])
+
+                sp_inv = digit in sp_inv_set
+                ko_inv = digit in ko_inv_set
+                cs_inv = digit in cs_inv_set
+                n_inv  = sum([sp_inv, ko_inv, cs_inv])
+
+                w_sp = 0.20 if sp_inv else 0.10
+                w_ko = 0.20 if ko_inv else 0.10
+                w_cs = 0.20 if cs_inv else 0.10
+
+                # 금20% + 한국채10% + 미국채10% 고정, 현금 = 나머지
+                r_s8   = w_sp*r_sp + w_ko*r_ko + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us
+                r_bhmax = 0.50*r_sp + 0.25*r_g + 0.25*r_us
+                r_bhmin = 0.25*r_sp + 0.25*r_g + 0.25*r_us
+
+                v_s8   *= (1 + r_s8)
+                v_bhmax *= (1 + r_bhmax)
+                v_bhmin *= (1 + r_bhmin)
+
+                records.append({
+                    "연도": y, "시즌": season, "끝자리": digit,
+                    "SP투자": "✅" if sp_inv else "💤",
+                    "KO투자": "✅" if ko_inv else "💤",
+                    "CS투자": "✅" if cs_inv else "💤",
+                    "투자지수수": n_inv,
+                    "주식비중(%)": n_inv*10+30,
+                    "SP500(%)": round(r_sp*100, 2),
+                    "KOSPI(%)": round(r_ko*100, 2),
+                    "CSI300(%)": round(r_cs*100, 2),
+                    "금(%)":   round(r_g*100, 2),
+                    "한국채(%)": round(r_kr*100, 2),
+                    "미국채(%)": round(r_us*100, 2),
+                    "전략8":  round(v_s8, 2),
+                    "BH_max": round(v_bhmax, 2),
+                    "BH_min": round(v_bhmin, 2),
+                })
+
+        return pd.DataFrame(records) if records else pd.DataFrame()
+
+    sims["s8"] = simulate_s8()
     return raw, monthly, seas, strategies, sims
 
 
@@ -1049,6 +1124,89 @@ def main():
 
             return {c: pd.Series(vals[c], index=dates) for c in cols}
 
+        def _daily_pf_series_s8(fee_pct=0.0):
+            """전략8 일별 포트폴리오 시리즈 — SP500+KOSPI+CSI300 3지수 동적 비중"""
+            sim_s8 = sims.get("s8", pd.DataFrame())
+            if sim_s8.empty:
+                return {}
+
+            d_sp = raw["sp500"].pct_change().dropna()
+            d_ko = raw["kospi"].pct_change().dropna()
+            d_cs = raw["csi300"].pct_change().dropna()
+            d_g  = raw["gold"].pct_change().dropna()
+            d_kr = raw["krbond"].pct_change().dropna()
+            d_us = (-DURATION_US * raw["us30y"].diff() / 100).dropna()
+
+            for s in [d_sp, d_ko, d_cs, d_g, d_kr, d_us]:
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+
+            ko_idx = set(d_ko.index)
+            cs_idx = set(d_cs.index)
+            g_idx  = set(d_g.index)
+            kr_idx = set(d_kr.index)
+            us_idx = set(d_us.index)
+
+            # 3개 지수 투자 맵
+            sp_sim = sims.get("sp500", pd.DataFrame())
+            ko_sim = sims.get("kospi", pd.DataFrame())
+            cs_sim = sims.get("csi300", pd.DataFrame())
+
+            sp_inv_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in sp_sim.iterrows()} if not sp_sim.empty else {}
+            ko_inv_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in ko_sim.iterrows()} if not ko_sim.empty else {}
+            cs_inv_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in cs_sim.iterrows()} if not cs_sim.empty else {}
+
+            cols = ["전략8", "BH_max", "BH_min"]
+            v    = {"전략8": 100.0, "BH_max": 100.0, "BH_min": 100.0}
+            vals = {c: [] for c in cols}
+            dates = []
+
+            bm_stk, bm_gld, bm_bnd         = 50.0, 25.0, 25.0
+            bl_stk, bl_gld, bl_bnd, bl_csh = 25.0, 25.0, 25.0, 25.0
+            prev_season_key = None
+
+            for dt in d_sp.index:
+                mo = dt.month
+                if mo >= 11:   season, sy = "Nov-Apr", dt.year
+                elif mo <= 4:  season, sy = "Nov-Apr", dt.year - 1
+                else:          season, sy = "May-Oct", dt.year
+                season_key = (sy, season)
+
+                r_sp = float(d_sp[dt])
+                r_ko = float(d_ko[dt]) if dt in ko_idx else r_sp
+                r_cs = float(d_cs[dt]) if dt in cs_idx else r_sp
+                r_g  = float(d_g[dt])  if dt in g_idx  else 0.0
+                r_kr = float(d_kr[dt]) if dt in kr_idx else 0.0
+                r_us = float(d_us[dt]) if dt in us_idx else 0.0
+
+                sp_inv = sp_inv_map.get((sy, season), False)
+                ko_inv = ko_inv_map.get((sy, season), sp_inv)
+                cs_inv = cs_inv_map.get((sy, season), sp_inv)
+
+                w_sp = 0.20 if sp_inv else 0.10
+                w_ko = 0.20 if ko_inv else 0.10
+                w_cs = 0.20 if cs_inv else 0.10
+
+                # 시즌 전환 시 BH 리밸런싱
+                if season_key != prev_season_key and prev_season_key is not None:
+                    tot_max = bm_stk + bm_gld + bm_bnd
+                    bm_stk, bm_gld, bm_bnd = tot_max*0.50, tot_max*0.25, tot_max*0.25
+                    tot_min = bl_stk + bl_gld + bl_bnd + bl_csh
+                    bl_stk = bl_gld = bl_bnd = bl_csh = tot_min * 0.25
+                prev_season_key = season_key
+
+                r_s8 = w_sp*r_sp + w_ko*r_ko + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us
+                v["전략8"] *= (1 + r_s8)
+
+                bm_stk *= (1+r_sp); bm_gld *= (1+r_g); bm_bnd *= (1+r_us)
+                bl_stk *= (1+r_sp); bl_gld *= (1+r_g); bl_bnd *= (1+r_us)
+                v["BH_max"] = bm_stk + bm_gld + bm_bnd
+                v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
+
+                for c in cols: vals[c].append(v[c])
+                dates.append(dt)
+
+            return {c: pd.Series(vals[c], index=dates) for c in cols}
+
         def _stats(s):
             if s is None or s.empty: return 0.0, 0.0, 0.0
             cum  = s.iloc[-1] - 100.0
@@ -1156,8 +1314,8 @@ def main():
             )
             st.plotly_chart(fig_c, use_container_width=True)
 
-        ptab_s, ptab_n, ptab_k, ptab_d, ptab_kq, ptab_cn = st.tabs(
-            ["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300"]
+        ptab_s, ptab_n, ptab_k, ptab_d, ptab_kq, ptab_cn, ptab_s8 = st.tabs(
+            ["🇺🇸 S&P500", "💻 NASDAQ", "🇰🇷 KOSPI", "🏛️ DOW", "📱 KOSDAQ", "🇨🇳 CSI300", "🌏 전략8"]
         )
         for ptab, pkey in [
             (ptab_s,"sp500"),(ptab_n,"nasdaq"),(ptab_k,"kospi"),
@@ -1165,6 +1323,77 @@ def main():
         ]:
             with ptab:
                 _render_perf_tab(pkey, fee_pct=_applied_fee)
+
+        with ptab_s8:
+            pf8 = _daily_pf_series_s8(fee_pct=_applied_fee)
+            if not pf8:
+                st.warning("데이터 없음")
+            else:
+                s8_cum,  s8_cagr,  s8_mdd  = _stats(pf8["전략8"])
+                bx_cum,  bx_cagr,  bx_mdd  = _stats(pf8["BH_max"])
+                bn_cum,  bn_cagr,  bn_mdd  = _stats(pf8["BH_min"])
+                y0 = pf8["전략8"].index[0].year
+                y1 = pf8["전략8"].index[-1].year
+
+                fee_badge = (
+                    f" &nbsp;<span style='font-size:10px;color:#fbbf24;background:#1a1305;"
+                    f"border:1px solid #92400e;border-radius:4px;padding:1px 6px;'>"
+                    f"수수료 {_applied_fee:.2f}% 반영</span>"
+                    if _applied_fee > 0 else ""
+                )
+                hero8 = _card_html(
+                    f"🌏 전략8  (SP500+KOSPI+CSI300 3지수 동적배분){fee_badge}",
+                    "#0a1020", "#38bdf8", s8_cum, s8_cagr, s8_mdd, large=True
+                )
+                cmp8 = (
+                    _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", bx_cum, bx_cagr, bx_mdd)
+                  + _card_html("📊 주식25% BH", "#111827", "#6b7280", bn_cum, bn_cagr, bn_mdd)
+                )
+                st.markdown(
+                    f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px;">'
+                    f'  {hero8}'
+                    f'  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">{cmp8}</div>'
+                    f'</div>'
+                    f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
+                    f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준 · '
+                    f'금20% + 한국채10% + 미국채10% 고정 · 3지수 투자시즌 합의에 따라 주식 30~60% 동적조절</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # 누적 성과 차트
+                fee_title = f"  (수수료 {_applied_fee:.2f}% 반영)" if _applied_fee > 0 else ""
+                fig_s8 = go.Figure()
+                for col, name, color, width in [
+                    ("전략8",  "🌏 전략8",      "#38bdf8", 2.5),
+                    ("BH_max", "📈 주식50%BH",  "#6366f1", 1.0),
+                    ("BH_min", "📊 주식25%BH",  "#6b7280", 1.0),
+                ]:
+                    s = pf8[col].resample("W").last()
+                    fig_s8.add_trace(go.Scatter(
+                        x=s.index, y=s.values, name=name, mode="lines",
+                        line=dict(color=color, width=width),
+                        hovertemplate=f"<b>{name}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:.1f}}<extra></extra>",
+                    ))
+                fig_s8.update_layout(
+                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                    height=400, margin=dict(l=0, r=0, t=44, b=0),
+                    title=dict(text=f"누적 성과 비교 (시작=100){fee_title}", font=dict(size=13, color="#f1f5f9")),
+                    legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
+                    xaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10, color="#9ca3af")),
+                    yaxis=dict(showgrid=True, gridcolor="#1e2a3a", tickfont=dict(size=10)),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_s8, use_container_width=True)
+
+                # 시즌별 상세 테이블
+                with st.expander("📋 시즌별 상세 데이터"):
+                    sim8 = sims.get("s8", pd.DataFrame())
+                    if not sim8.empty:
+                        disp8 = sim8[["연도","시즌","끝자리","SP투자","KO투자","CS투자",
+                                      "투자지수수","주식비중(%)","SP500(%)","KOSPI(%)","CSI300(%)",
+                                      "금(%)","한국채(%)","미국채(%)","전략8","BH_max","BH_min"]].copy()
+                        disp8 = disp8.sort_values("연도", ascending=False).reset_index(drop=True)
+                        st.dataframe(disp8, use_container_width=True, height=400)
 
         # ── 6. 과거 데이터 테이블 ──
         st.markdown('<div class="section-title">🗂️ 과거 데이터 테이블</div>', unsafe_allow_html=True)
