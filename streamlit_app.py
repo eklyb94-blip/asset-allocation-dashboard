@@ -574,9 +574,11 @@ def compute_strategy():
                 # CSI300: 투자시즌 20% / 비투자 10%
                 w_cs = 0.20 if cs_inv else 0.10
 
-                # 금20% + 한국채10% + 미국채10% 고정, 현금 = 나머지
+                # 금20% + 한국채10% + 미국채10% 고정, 현금 → KODEX 국고채3년(한국채) 운용
+                w_cash  = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
                 r_s8    = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                           + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us)
+                           + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us
+                           + w_cash*r_kr)   # 현금 → 국고채3년 운용
                 r_bhmax = 0.50*r_sp + 0.25*r_g + 0.25*r_us
                 r_bhmin = 0.25*r_sp + 0.25*r_g + 0.25*r_us
 
@@ -1219,8 +1221,10 @@ def main():
                     bl_stk = bl_gld = bl_bnd = bl_csh = tot_min * 0.25
                 prev_season_key = season_key
 
+                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
                 r_s8 = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us)
+                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us
+                        + w_cash*r_kr)   # 현금 → KODEX 국고채3년 운용
                 v["전략8"] *= (1 + r_s8)
 
                 bm_stk *= (1+r_sp); bm_gld *= (1+r_g); bm_bnd *= (1+r_us)
