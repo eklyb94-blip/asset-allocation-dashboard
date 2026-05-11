@@ -611,10 +611,10 @@ def compute_strategy():
                 # CSI300: 투자시즌 20% / 비투자 10%
                 w_cs = 0.20 if cs_inv else 0.10
 
-                # 금20% + 한국채3년10% + 한국채10년5% + 미국채10년5% 고정, 현금 → 국고채3년 운용
-                w_cash  = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.05 - 0.05, 10)
+                # 금20% + 한국채10년10% + 미국채10년10% 고정, 잔여 현금 → 국고채3년 운용
+                w_cash  = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
                 r_s8    = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                           + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.05*r_kr10 + 0.05*r_us
+                           + w_cs*r_cs + 0.20*r_g + 0.10*r_kr10 + 0.10*r_us
                            + w_cash*r_kr)   # 현금 → 국고채3년 운용
                 r_bhmax = 0.50*r_sp + 0.25*r_g + 0.25*r_us
                 r_bhmin = 0.25*r_sp + 0.25*r_g + 0.25*r_us
@@ -1263,10 +1263,10 @@ def main():
                     bl_stk = bl_gld = bl_bnd = bl_csh = tot_min * 0.25
                 prev_season_key = season_key
 
-                # 금20% + 한국채3년10% + 한국채10년5% + 미국채10년5% 고정
-                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.05 - 0.05, 10)
+                # 금20% + 한국채10년10% + 미국채10년10% 고정, 잔여 현금 → 국고채3년 운용
+                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
                 r_s8 = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.05*r_kr10 + 0.05*r_us
+                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr10 + 0.10*r_us
                         + w_cash*r_kr)   # 현금 → 국고채3년 운용
                 v["전략8"] *= (1 + r_s8)
 
@@ -4078,10 +4078,10 @@ def main():
                 w_cs = 0.20 if cs_inv else 0.10
                 prev_sk = sk
 
-                # 금20% + 한국채3년10% + 한국채10년5% + 미국채10년5%
-                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.05 - 0.05, 10)
+                # 금20% + 한국채10년10% + 미국채10년10% 고정, 잔여 현금 → 국고채3년 운용
+                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
                 r_pf = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.05*r_kr10 + 0.05*r_us + w_cash*r_kr)
+                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr10 + 0.10*r_us + w_cash*r_kr)
                 v["전략8_KODEX"] *= (1 + r_pf)
                 v["SP500"] *= (1 + r_sp)
                 v["KOSPI"] *= (1 + r_ko)
@@ -4146,8 +4146,8 @@ def main():
               <div style="color:#34d399;font-size:20px;font-weight:900;">{total_stk8}%</div>
             </div>
             <div>
-              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">국고채3년 비중 (채권+현금)</div>
-              <div style="color:#fb923c;font-size:20px;font-weight:900;">{int((0.10+w_cash8)*100)}%</div>
+              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">국고채3년 비중 (현금대체)</div>
+              <div style="color:#fb923c;font-size:20px;font-weight:900;">{int(w_cash8*100)}%</div>
             </div>
           </div>
         </div>
@@ -4188,12 +4188,12 @@ def main():
             ("🇨🇳 KODEX 차이나CSI300",          "168580", w_cs8,   "CSI300 투자시즌 20%" if cs_inv8 else "비투자 10%",  True),
             ("🥇 ACE KRX금현물",             "411060", 0.20,
              "고정 20%", True),
-            ("🏦 KODEX 국고채3년",           "114820", round(0.10 + w_cash8, 4),
-             f"채권 10% + 현금대체 {int(w_cash8*100)}%", True),
-            ("📊 KODEX 국채선물10년 (한국)", "148070", 0.05,
-             "고정 5%", True),
-            ("🌐 KODEX 미국10년국채선물",     "304660", 0.05,
-             "고정 5%", True),
+            ("🏦 KODEX 국고채3년 (현금대체)", "114820", w_cash8,
+             f"현금대체 {int(w_cash8*100)}%", True),
+            ("📊 KODEX 국채선물10년 (한국)",  "148070", 0.10,
+             "고정 10%", True),
+            ("🌐 KODEX 미국10년국채선물",      "304660", 0.10,
+             "고정 10%", True),
         ]
         th_s = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
                 "font-size:11px;font-weight:700")
