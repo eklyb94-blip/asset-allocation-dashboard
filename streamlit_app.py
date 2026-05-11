@@ -496,7 +496,7 @@ def compute_strategy():
                           else (0.25*rs + 0.25*rg + 0.25*rb)
                 r_bhmin = 0.25*rs + 0.25*rg + 0.25*rb
                 r_bhmax = 0.50*rs + 0.25*rg + 0.25*rb
-                r_stk   = rs if inv else 0.0
+                r_stk   = rs  # 주식단독: 항상 100% 주식 BH
 
                 v_s6    *= (1 + r_s6)
                 v_bhmin *= (1 + r_bhmin)
