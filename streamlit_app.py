@@ -4076,10 +4076,82 @@ def main():
         st.markdown("---")
 
         # ════════════════════
-        # 서브탭: 과거 백테스트 | KODEX 실거래
+        # 서브탭: KODEX 실거래(기본) | 과거 백테스트
         # ════════════════════
         stab_kodex, stab_hist = st.tabs(["🏦 KODEX 실거래 (2021~)", "📈 과거 백테스트 (장기 지수)"])
 
+        # ── KODEX 실거래 탭 ──────────────────────────
+        with stab_kodex:
+            with st.spinner("KODEX ETF 데이터 로딩 중..."):
+                pf_k = _daily_pf_series_kodex()
+
+            if not pf_k:
+                st.warning("KODEX ETF 데이터를 불러올 수 없습니다. 네트워크를 확인해 주세요.")
+            else:
+                s8_k = pf_k["전략8_KODEX"]
+                sp_k = pf_k["SP500"]
+                ko_k = pf_k["KOSPI"]
+                ck,  gk,  mk  = _stats(s8_k)
+                csp, gsp, msp = _stats(sp_k)
+                cko, gko, mko = _stats(ko_k)
+                y0k = s8_k.index[0].strftime("%Y-%m")
+                y1k = s8_k.index[-1].strftime("%Y-%m")
+
+                # 성과 카드
+                c1k, c2k, c3k = st.columns(3)
+                with c1k:
+                    st.markdown(
+                        _card_html(f"🏦 전략8 KODEX ({y0k}~)",
+                                   "#0a1020", "#38bdf8", ck, gk, mk, large=True),
+                        unsafe_allow_html=True)
+                with c2k:
+                    st.markdown(
+                        _card_html("🇺🇸 S&P500 BH (KODEX)", "#0d0d20", "#6366f1",
+                                   csp, gsp, msp),
+                        unsafe_allow_html=True)
+                with c3k:
+                    st.markdown(
+                        _card_html("🇰🇷 KOSPI BH (KODEX)", "#111827", "#22c55e",
+                                   cko, gko, mko),
+                        unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.caption(
+                    f"📌 KODEX/ACE ETF 실제 가격 기반 · {y0k} ~ {y1k} · 전략8 동일 로직 적용 "
+                    f"· 벤치마크: KODEX 미국S&P500(379800) / KODEX 200(069500)")
+
+                # 누적 성과 차트
+                fig_k = go.Figure()
+                for s_k, nm_k, clr_k, w_k in [
+                    (s8_k, "🏦 전략8 KODEX", "#38bdf8", 2.5),
+                    (sp_k, "🇺🇸 S&P500",    "#6366f1", 1.0),
+                    (ko_k, "🇰🇷 KOSPI",     "#22c55e", 1.0),
+                ]:
+                    fig_k.add_trace(go.Scatter(
+                        x=s_k.index, y=s_k.values, name=nm_k, mode="lines",
+                        line=dict(color=clr_k, width=w_k),
+                        hovertemplate=(f"<b>{nm_k}</b><br>%{{x|%Y-%m-%d}}"
+                                       f"<br>%{{y:.1f}}<extra></extra>"),
+                    ))
+                fig_k.update_layout(
+                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                    height=380, margin=dict(l=0, r=0, t=44, b=0),
+                    title=dict(text=f"KODEX ETF 기반 누적 성과 ({y0k}~{y1k})",
+                               font=dict(size=13, color="#f1f5f9")),
+                    legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
+                    xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                               tickfont=dict(size=10, color="#9ca3af")),
+                    yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                               tickfont=dict(size=10)),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_k, use_container_width=True)
+
+                # 월별 수익률 히트맵
+                st.markdown("#### 📅 월별 수익률 히트맵 (전략8 KODEX)")
+                st.markdown(_monthly_heatmap_html(s8_k), unsafe_allow_html=True)
+
+        # ── 과거 백테스트 탭 ──────────────────────────
         with stab_hist:
             fee8 = st.session_state.get("applied_fee", 0.0)
             pf_h = _daily_pf_series_s8(fee_pct=fee8)
@@ -4087,7 +4159,8 @@ def main():
                 st.warning("데이터 없음")
             else:
                 s8_h = pf_h["전략8"]
-                y0h = s8_h.index[0].year; y1h = s8_h.index[-1].year
+                y0h = s8_h.index[0].year
+                y1h = s8_h.index[-1].year
 
                 # SP500 / KOSPI 벤치마크 (시작=100 리베이스)
                 def _rebase(key, start_dt):
@@ -4099,10 +4172,11 @@ def main():
                 sp_bh = _rebase("sp500", s8_h.index[0])
                 ko_bh = _rebase("kospi", s8_h.index[0])
 
-                c8, g8, m8 = _stats(s8_h)
+                c8,  g8,  m8  = _stats(s8_h)
                 cs_, gs_, ms_ = _stats(sp_bh)
                 ck_, gk_, mk_ = _stats(ko_bh)
 
+                # 성과 카드
                 c1h, c2h, c3h = st.columns(3)
                 with c1h:
                     st.markdown(
@@ -4120,6 +4194,7 @@ def main():
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
+                # 누적 성과 차트
                 fig_h = go.Figure()
                 for s_plot, nm_h, clr_h, w_h in [
                     (s8_h,  "🌏 전략8",    "#38bdf8", 2.5),
@@ -4147,76 +4222,9 @@ def main():
                 )
                 st.plotly_chart(fig_h, use_container_width=True)
 
+                # 월별 수익률 히트맵
                 st.markdown("#### 📅 월별 수익률 히트맵 (전략8)")
                 st.markdown(_monthly_heatmap_html(s8_h), unsafe_allow_html=True)
-
-        with stab_kodex:
-            with st.spinner("KODEX ETF 데이터 로딩 중..."):
-                pf_k = _daily_pf_series_kodex()
-
-            if not pf_k:
-                st.warning("KODEX ETF 데이터를 불러올 수 없습니다. 네트워크를 확인해 주세요.")
-            else:
-                s8_k = pf_k["전략8_KODEX"]
-                sp_k = pf_k["SP500"]
-                ko_k = pf_k["KOSPI"]
-                ck, gk, mk   = _stats(s8_k)
-                csp, gsp, msp = _stats(sp_k)
-                cko, gko, mko = _stats(ko_k)
-                y0k = s8_k.index[0].strftime("%Y-%m")
-                y1k = s8_k.index[-1].strftime("%Y-%m")
-
-                c1k, c2k, c3k = st.columns(3)
-                with c1k:
-                    st.markdown(
-                        _card_html(f"🏦 전략8 KODEX ({y0k}~)",
-                                   "#0a1020", "#38bdf8", ck, gk, mk, large=True),
-                        unsafe_allow_html=True)
-                with c2k:
-                    st.markdown(
-                        _card_html("🇺🇸 S&P500 BH (KODEX)", "#0d0d20", "#6366f1",
-                                   csp, gsp, msp),
-                        unsafe_allow_html=True)
-                with c3k:
-                    st.markdown(
-                        _card_html("🇰🇷 KOSPI BH (KODEX)", "#111827", "#22c55e",
-                                   cko, gko, mko),
-                        unsafe_allow_html=True)
-
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.caption(
-                    f"📌 KODEX/ACE ETF 실제 가격 기반 · {y0k} ~ {y1k} · 전략8 동일 로직 적용 "
-                    f"· 벤치마크: KODEX 미국S&P500(379800) / KODEX 200(069500)")
-
-                fig_k = go.Figure()
-                for s_k, nm_k, clr_k, w_k in [
-                    (s8_k, "🏦 전략8 KODEX", "#38bdf8", 2.5),
-                    (sp_k, "🇺🇸 S&P500",    "#6366f1", 1.0),
-                    (ko_k, "🇰🇷 KOSPI",     "#22c55e", 1.0),
-                ]:
-                    sk_s = s_k
-                    fig_k.add_trace(go.Scatter(
-                        x=sk_s.index, y=sk_s.values, name=nm_k, mode="lines",
-                        line=dict(color=clr_k, width=w_k),
-                        hovertemplate=(f"<b>{nm_k}</b><br>%{{x|%Y-%m-%d}}"
-                                       f"<br>%{{y:.1f}}<extra></extra>"),
-                    ))
-                fig_k.update_layout(
-                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
-                    height=380, margin=dict(l=0, r=0, t=44, b=0),
-                    title=dict(text=f"KODEX ETF 기반 누적 성과 ({y0k}~{y1k})",
-                               font=dict(size=13, color="#f1f5f9")),
-                    legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
-                    xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
-                               tickfont=dict(size=10, color="#9ca3af")),
-                    yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
-                               tickfont=dict(size=10)),
-                    hovermode="x unified",
-                )
-                st.plotly_chart(fig_k, use_container_width=True)
-
-                st.markdown("#### 📅 월별 수익률 히트맵 (전략8 KODEX)")
-                st.markdown(_monthly_heatmap_html(s8_k), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
