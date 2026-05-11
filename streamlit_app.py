@@ -304,6 +304,38 @@ def load_multpl(url):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_kodex_etfs():
+    """KODEX/ACE ETF 일별 종가 로드 (2021~)"""
+    TICKERS = {
+        "sp500":  "379800.KS",   # KODEX 미국S&P500
+        "nasdaq": "379810.KS",   # KODEX 미국나스닥100
+        "kospi":  "069500.KS",   # KODEX 200
+        "kosdaq": "229200.KS",   # KODEX 코스닥150
+        "csi300": "168580.KS",   # KODEX 차이나CSI300
+        "gold":   "411060.KS",   # ACE KRX금현물
+        "krbond": "114820.KS",   # KODEX 국고채3년
+        "us10y":  "304660.KS",   # KODEX 미국10년국채선물
+    }
+    START = "2021-01-01"
+    out = {}
+    for key, ticker in TICKERS.items():
+        try:
+            df = yf.download(ticker, start=START, auto_adjust=True,
+                             progress=False, multi_level_index=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if df.empty or "Close" not in df.columns:
+                out[key] = pd.Series(dtype=float)
+            else:
+                s = df["Close"].dropna()
+                s.index = pd.to_datetime(s.index).tz_localize(None)
+                out[key] = s
+        except Exception:
+            out[key] = pd.Series(dtype=float)
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_daily_ohlc():
     result = {}
 
@@ -844,7 +876,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8 = st.tabs(["📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "📝 메모장"])
+    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "📝 메모장"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -3773,6 +3805,413 @@ def main():
                 if "memo_textarea" in st.session_state:
                     del st.session_state["memo_textarea"]
                 st.rerun()
+
+
+    # ════════════════════════════════════════
+    # TAB 0: 실사용 전략 (전략8 가이드)
+    # — main_tab1 내부 함수 재사용을 위해 맨 뒤에 배치
+    # ════════════════════════════════════════
+    with main_tab0:
+
+        # ── 헬퍼: 월별 수익률 히트맵 HTML ──
+        def _monthly_heatmap_html(series):
+            """일별 가격 시리즈 → 월별 수익률 컬러 테이블 HTML"""
+            if series is None or len(series) < 5:
+                return "<p style='color:#9ca3af'>데이터 부족</p>"
+            mo_r = series.resample("ME").last().pct_change().dropna() * 100
+            df_m = mo_r.to_frame("v")
+            df_m["y"] = df_m.index.year
+            df_m["m"] = df_m.index.month
+            pivot = df_m.pivot(index="y", columns="m", values="v")
+            ann = series.resample("YE").last().pct_change().dropna() * 100
+            ann.index = ann.index.year
+            pivot["A"] = ann
+            pivot = pivot.sort_index(ascending=False)
+
+            MN = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월","연간"]
+            th = "background:#1e2a3a;padding:4px 6px;text-align:center;color:#9ca3af;font-size:11px;font-weight:700"
+            td_b = "padding:3px 5px;text-align:center;font-size:11px"
+
+            def _sty(v, scale=10):
+                if v is None or (isinstance(v, float) and np.isnan(v)):
+                    return f"{td_b};background:#0d111c;color:#374151", "─"
+                t = min(abs(v) / scale, 1.0)
+                if v > 0:
+                    bg = f"rgb({int(6+22*t)},{int(78+100*t)},{int(57+3*t)})"
+                else:
+                    bg = f"rgb({int(127+100*t)},29,29)"
+                return f"{td_b};background:{bg};color:#f1f5f9;font-weight:600", f"{v:+.1f}%"
+
+            html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;">'
+            html += f'<tr><th style="{th};text-align:left">연도</th>'
+            for nm in MN:
+                html += f'<th style="{th}">{nm}</th>'
+            html += '</tr>'
+            for y in pivot.index:
+                html += (f'<tr><td style="background:#111827;padding:3px 6px;'
+                         f'color:#f1f5f9;font-weight:700;font-size:11px">{y}</td>')
+                for m in range(1, 13):
+                    val = None
+                    if m in pivot.columns:
+                        raw_v = pivot.loc[y, m]
+                        val = None if pd.isna(raw_v) else float(raw_v)
+                    sty, txt = _sty(val, scale=10)
+                    html += f'<td style="{sty}">{txt}</td>'
+                ann_v = None
+                if "A" in pivot.columns:
+                    av = pivot.loc[y, "A"]
+                    ann_v = None if pd.isna(av) else float(av)
+                sty, txt = _sty(ann_v, scale=20)
+                html += f'<td style="{sty};font-weight:700">{txt}</td></tr>'
+            html += '</table></div>'
+            return html
+
+        # ── 헬퍼: KODEX ETF 기반 전략8 일별 포트폴리오 ──
+        def _daily_pf_series_kodex():
+            """KODEX ETF 가격 기반 전략8 일별 시리즈 (2021~)"""
+            kodex = load_kodex_etfs()
+
+            def _pc(key):
+                s = kodex.get(key, pd.Series(dtype=float))
+                if s.empty:
+                    return pd.Series(dtype=float)
+                s2 = s.copy()
+                s2.index = pd.to_datetime(s2.index).tz_localize(None)
+                return s2.pct_change().dropna()
+
+            d_sp = _pc("sp500")
+            if d_sp.empty:
+                return {}
+            d_nq = _pc("nasdaq"); d_ko = _pc("kospi"); d_kq = _pc("kosdaq")
+            d_cs = _pc("csi300"); d_g  = _pc("gold"); d_kr = _pc("krbond"); d_us = _pc("us10y")
+
+            nq_idx = set(d_nq.index); ko_idx = set(d_ko.index); kq_idx = set(d_kq.index)
+            cs_idx = set(d_cs.index); g_idx  = set(d_g.index)
+            kr_idx = set(d_kr.index); us_idx = set(d_us.index)
+
+            def _inv_map(key):
+                inv_na = strategies[key]["inv_na"]
+                inv_mo = strategies[key]["inv_mo"]
+                return {
+                    (yr, s): (yr % 10) in (inv_na if s == "Nov-Apr" else inv_mo)
+                    for yr in range(2019, 2032)
+                    for s in ["Nov-Apr", "May-Oct"]
+                }
+
+            sp_imap = _inv_map("sp500")
+            ko_imap = _inv_map("kospi")
+            cs_imap = _inv_map("csi300")
+
+            cols = ["전략8_KODEX", "BH_max", "BH_min"]
+            v = {c: 100.0 for c in cols}
+            vals = {c: [] for c in cols}
+            dates = []
+            bm_stk, bm_gld, bm_bnd = 50.0, 25.0, 25.0
+            bl_stk, bl_gld, bl_bnd, bl_csh = 25.0, 25.0, 25.0, 25.0
+            prev_sk = None
+
+            for dt in d_sp.index:
+                mo_dt = dt.month
+                if mo_dt >= 11:   s_, sy = "Nov-Apr", dt.year
+                elif mo_dt <= 4:  s_, sy = "Nov-Apr", dt.year - 1
+                else:             s_, sy = "May-Oct", dt.year
+                sk = (sy, s_)
+
+                r_sp = float(d_sp[dt])
+                r_nq = float(d_nq[dt]) if dt in nq_idx else r_sp
+                r_ko = float(d_ko[dt]) if dt in ko_idx else r_sp
+                r_kq = float(d_kq[dt]) if dt in kq_idx else r_ko
+                r_cs = float(d_cs[dt]) if dt in cs_idx else r_sp
+                r_g  = float(d_g[dt])  if dt in g_idx  else 0.0
+                r_kr = float(d_kr[dt]) if dt in kr_idx else 0.0
+                r_us = float(d_us[dt]) if dt in us_idx else 0.0
+
+                sp_inv = sp_imap.get(sk, False)
+                ko_inv = ko_imap.get(sk, sp_inv)
+                cs_inv = cs_imap.get(sk, sp_inv)
+
+                w_sp = 0.10; w_nq = 0.10 if sp_inv else 0.0
+                w_ko = 0.10; w_kq = 0.10 if ko_inv else 0.0
+                w_cs = 0.20 if cs_inv else 0.10
+
+                if sk != prev_sk and prev_sk is not None:
+                    tot = bm_stk + bm_gld + bm_bnd
+                    bm_stk, bm_gld, bm_bnd = tot*0.50, tot*0.25, tot*0.25
+                    tot2 = bl_stk + bl_gld + bl_bnd + bl_csh
+                    bl_stk = bl_gld = bl_bnd = bl_csh = tot2*0.25
+                prev_sk = sk
+
+                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
+                r_pf = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
+                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us + w_cash*r_kr)
+                v["전략8_KODEX"] *= (1 + r_pf)
+
+                bm_stk *= (1+r_sp); bm_gld *= (1+r_g); bm_bnd *= (1+r_us)
+                bl_stk *= (1+r_sp); bl_gld *= (1+r_g); bl_bnd *= (1+r_us)
+                v["BH_max"] = bm_stk + bm_gld + bm_bnd
+                v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
+
+                for c in cols:
+                    vals[c].append(v[c])
+                dates.append(dt)
+
+            return {c: pd.Series(vals[c], index=dates) for c in cols}
+
+        # ════════════════════
+        # 현황판
+        # ════════════════════
+        st.markdown('<div class="section-title">💡 전략8 실사용 가이드</div>', unsafe_allow_html=True)
+
+        sp_inv8 = digit in (strategies["sp500"]["inv_na"] if season == "Nov-Apr"
+                            else strategies["sp500"]["inv_mo"])
+        ko_inv8 = digit in (strategies["kospi"]["inv_na"] if season == "Nov-Apr"
+                            else strategies["kospi"]["inv_mo"])
+        cs_inv8 = digit in (strategies["csi300"]["inv_na"] if season == "Nov-Apr"
+                            else strategies["csi300"]["inv_mo"])
+
+        w_sp8 = 0.10; w_nq8 = 0.10 if sp_inv8 else 0.0
+        w_ko8 = 0.10; w_kq8 = 0.10 if ko_inv8 else 0.0
+        w_cs8 = 0.20 if cs_inv8 else 0.10
+        w_cash8 = round(1.0 - w_sp8 - w_nq8 - w_ko8 - w_kq8 - w_cs8 - 0.20 - 0.10 - 0.10, 10)
+        total_stk8 = int((w_sp8 + w_nq8 + w_ko8 + w_kq8 + w_cs8) * 100)
+
+        # 다음 리밸런싱
+        if season == "Nov-Apr":
+            nrb_year = today.year + 1 if today.month <= 4 else today.year
+            next_reb8 = date(nrb_year, 5, 1)
+        else:
+            next_reb8 = date(today.year, 11, 1)
+        days_reb8 = (next_reb8 - today).days
+
+        season_color8 = "#38bdf8" if season == "Nov-Apr" else "#fb923c"
+        season_label8 = "🌨️ 투자시즌 (Nov~Apr)" if season == "Nov-Apr" else "☀️ 조정시즌 (May~Oct)"
+
+        st.markdown(f"""
+        <div style="background:#0d1117;border:1.5px solid {season_color8};border-radius:12px;
+                    padding:16px 20px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+            <div>
+              <div style="color:{season_color8};font-size:11px;font-weight:800;
+                          letter-spacing:1px;margin-bottom:4px;">현재 시즌</div>
+              <div style="color:#f1f5f9;font-size:18px;font-weight:900;">{season_label8}</div>
+            </div>
+            <div>
+              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">기준연도 끝자리</div>
+              <div style="color:#fbbf24;font-size:18px;font-weight:900;">{sig_year}년 (끝자리 {digit})</div>
+            </div>
+            <div>
+              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">다음 리밸런싱</div>
+              <div style="color:#f1f5f9;font-size:16px;font-weight:700;">
+                {next_reb8.strftime("%Y-%m-%d")}
+                <span style="color:#9ca3af;font-size:12px;margin-left:6px;">D-{days_reb8}일</span>
+              </div>
+            </div>
+            <div>
+              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">현재 주식 비중</div>
+              <div style="color:#34d399;font-size:20px;font-weight:900;">{total_stk8}%</div>
+            </div>
+            <div>
+              <div style="color:#9ca3af;font-size:11px;margin-bottom:4px;">현금(국고채3년) 비중</div>
+              <div style="color:#fb923c;font-size:20px;font-weight:900;">{int(w_cash8*100)}%</div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 3대 지수 투자 신호 카드
+        inv_card_html = ""
+        for idx_label, inv, emoji, sub in [
+            ("S&P500 / 나스닥", sp_inv8, "🇺🇸", "KODEX 미국S&P500 + 나스닥100"),
+            ("KOSPI / 코스닥",  ko_inv8, "🇰🇷", "KODEX 200 + 코스닥150"),
+            ("CSI300",          cs_inv8, "🇨🇳", "KODEX 차이나CSI300"),
+        ]:
+            clr_ = "#34d399" if inv else "#f87171"
+            bg_  = "#052e16" if inv else "#2d0000"
+            bdr_ = "#16a34a" if inv else "#991b1b"
+            lbl_ = "✅ 투자시즌" if inv else "💤 비투자시즌"
+            inv_card_html += (
+                f'<div style="background:{bg_};border:1.5px solid {bdr_};border-radius:10px;'
+                f'padding:14px;text-align:center;">'
+                f'<div style="font-size:24px;margin-bottom:6px;">{emoji}</div>'
+                f'<div style="color:#9ca3af;font-size:10px;font-weight:700;margin-bottom:4px;">{idx_label}</div>'
+                f'<div style="color:{clr_};font-size:14px;font-weight:800;margin-bottom:4px;">{lbl_}</div>'
+                f'<div style="color:#6b7280;font-size:10px;">{sub}</div>'
+                f'</div>'
+            )
+        st.markdown(
+            f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">'
+            f'{inv_card_html}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ETF 배분 테이블
+        alloc_data = [
+            ("🇺🇸 KODEX 미국S&P500",          "379800", w_sp8,   "SP500 투자시즌" if sp_inv8 else "─",               True),
+            ("💻 KODEX 미국나스닥100",           "379810", w_nq8,   "SP500 투자시즌 추가" if sp_inv8 else "비투자 (0%)", sp_inv8),
+            ("🇰🇷 KODEX 200",                   "069500", w_ko8,   "KOSPI 투자시즌" if ko_inv8 else "─",               True),
+            ("📱 KODEX 코스닥150",               "229200", w_kq8,   "KOSPI 투자시즌 추가" if ko_inv8 else "비투자 (0%)", ko_inv8),
+            ("🇨🇳 KODEX 차이나CSI300",          "168580", w_cs8,   "CSI300 투자시즌 20%" if cs_inv8 else "비투자 10%",  True),
+            ("🥇 ACE KRX금현물",                "411060", 0.20,    "고정 20%",                                         True),
+            ("🏦 KODEX 국고채3년",              "114820", 0.10,    "고정 10%",                                         True),
+            ("🌐 KODEX 미국10년국채선물",        "304660", 0.10,    "고정 10%",                                         True),
+            ("💵 KODEX 국고채3년 (현금대체)",   "114820", w_cash8, "잔여 현금 운용",                                   w_cash8 > 0.001),
+        ]
+        th_s = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
+                "font-size:11px;font-weight:700")
+        t_html = ('<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px;">'
+                  f'<tr>'
+                  f'<th style="{th_s};text-align:left">ETF</th>'
+                  f'<th style="{th_s};text-align:center">티커</th>'
+                  f'<th style="{th_s};text-align:center">비중</th>'
+                  f'<th style="{th_s}">비고</th></tr>')
+        for etf_nm, tkr, wt, note, active in alloc_data:
+            row_bg = "#0d1117" if active else "#080c10"
+            wt_clr = "#34d399" if wt > 0.05 else ("#fb923c" if wt > 0.001 else "#374151")
+            nm_clr = "#f1f5f9" if active else "#4b5563"
+            wt_txt = f"{wt*100:.0f}%" if wt > 0.001 else "0%"
+            t_html += (
+                f'<tr style="background:{row_bg};border-bottom:1px solid #1e2a3a;">'
+                f'<td style="padding:6px 10px;color:{nm_clr}">{etf_nm}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:#94a3b8;'
+                f'font-family:monospace">{tkr}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:{wt_clr};'
+                f'font-weight:800;font-size:14px">{wt_txt}</td>'
+                f'<td style="padding:6px 10px;color:#9ca3af">{note}</td>'
+                f'</tr>'
+            )
+        t_html += '</table>'
+        st.markdown(t_html, unsafe_allow_html=True)
+        st.caption("※ KODEX 국고채3년(114820)은 한국채권 고정 10% + 현금 대체 운용에 중복 사용됩니다.")
+
+        st.markdown("---")
+
+        # ════════════════════
+        # 서브탭: 과거 백테스트 | KODEX 실거래
+        # ════════════════════
+        stab_hist, stab_kodex = st.tabs(["📈 과거 백테스트 (장기 지수)", "🏦 KODEX 실거래 (2021~)"])
+
+        with stab_hist:
+            fee8 = st.session_state.get("applied_fee", 0.0)
+            pf_h = _daily_pf_series_s8(fee_pct=fee8)
+            if not pf_h:
+                st.warning("데이터 없음")
+            else:
+                s8_h = pf_h["전략8"]; bx_h = pf_h["BH_max"]; bn_h = pf_h["BH_min"]
+                c8, g8, m8 = _stats(s8_h)
+                cx, gx, mx = _stats(bx_h)
+                cn, gn, mn = _stats(bn_h)
+                y0h = s8_h.index[0].year; y1h = s8_h.index[-1].year
+
+                c1h, c2h, c3h = st.columns(3)
+                with c1h:
+                    st.markdown(
+                        _card_html(f"🌏 전략8 백테스트 ({y0h}~{y1h})",
+                                   "#0a1020", "#38bdf8", c8, g8, m8, large=True),
+                        unsafe_allow_html=True)
+                with c2h:
+                    st.markdown(
+                        _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", cx, gx, mx),
+                        unsafe_allow_html=True)
+                with c3h:
+                    st.markdown(
+                        _card_html("📊 주식25% BH", "#111827", "#6b7280", cn, gn, mn),
+                        unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                fig_h = go.Figure()
+                for col_h, nm_h, clr_h, w_h in [
+                    ("전략8",  "🌏 전략8",     "#38bdf8", 2.5),
+                    ("BH_max", "📈 주식50%BH", "#6366f1", 1.0),
+                    ("BH_min", "📊 주식25%BH", "#6b7280", 1.0),
+                ]:
+                    sh = pf_h[col_h].resample("W").last()
+                    fig_h.add_trace(go.Scatter(
+                        x=sh.index, y=sh.values, name=nm_h, mode="lines",
+                        line=dict(color=clr_h, width=w_h),
+                        hovertemplate=(f"<b>{nm_h}</b><br>%{{x|%Y-%m-%d}}"
+                                       f"<br>%{{y:.1f}}<extra></extra>"),
+                    ))
+                fig_h.update_layout(
+                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                    height=380, margin=dict(l=0, r=0, t=44, b=0),
+                    title=dict(text=f"누적 성과 비교 (시작=100, {y0h}~{y1h})",
+                               font=dict(size=13, color="#f1f5f9")),
+                    legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
+                    xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                               tickfont=dict(size=10, color="#9ca3af")),
+                    yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                               tickfont=dict(size=10)),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_h, use_container_width=True)
+
+                st.markdown("#### 📅 월별 수익률 히트맵 (전략8)")
+                st.markdown(_monthly_heatmap_html(s8_h), unsafe_allow_html=True)
+
+        with stab_kodex:
+            with st.spinner("KODEX ETF 데이터 로딩 중..."):
+                pf_k = _daily_pf_series_kodex()
+
+            if not pf_k:
+                st.warning("KODEX ETF 데이터를 불러올 수 없습니다. 네트워크를 확인해 주세요.")
+            else:
+                s8_k = pf_k["전략8_KODEX"]; bx_k = pf_k["BH_max"]; bn_k = pf_k["BH_min"]
+                ck, gk, mk = _stats(s8_k)
+                cx2, gx2, mx2 = _stats(bx_k)
+                cn2, gn2, mn2 = _stats(bn_k)
+                y0k = s8_k.index[0].strftime("%Y-%m")
+                y1k = s8_k.index[-1].strftime("%Y-%m")
+
+                c1k, c2k, c3k = st.columns(3)
+                with c1k:
+                    st.markdown(
+                        _card_html(f"🏦 전략8 KODEX ({y0k}~)",
+                                   "#0a1020", "#38bdf8", ck, gk, mk, large=True),
+                        unsafe_allow_html=True)
+                with c2k:
+                    st.markdown(
+                        _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", cx2, gx2, mx2),
+                        unsafe_allow_html=True)
+                with c3k:
+                    st.markdown(
+                        _card_html("📊 주식25% BH", "#111827", "#6b7280", cn2, gn2, mn2),
+                        unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.caption(
+                    f"📌 KODEX/ACE ETF 실제 가격 기반 · {y0k} ~ {y1k} · 전략8 동일 로직 적용 "
+                    f"· BH 기준: KODEX 미국S&P500(주식) + ACE KRX금현물(금) + KODEX 미국10년국채선물(채권)")
+
+                fig_k = go.Figure()
+                for col_k, nm_k, clr_k, w_k in [
+                    ("전략8_KODEX", "🏦 전략8 KODEX", "#38bdf8", 2.5),
+                    ("BH_max",      "📈 주식50% BH",  "#6366f1", 1.0),
+                    ("BH_min",      "📊 주식25% BH",  "#6b7280", 1.0),
+                ]:
+                    sk_s = pf_k[col_k]
+                    fig_k.add_trace(go.Scatter(
+                        x=sk_s.index, y=sk_s.values, name=nm_k, mode="lines",
+                        line=dict(color=clr_k, width=w_k),
+                        hovertemplate=(f"<b>{nm_k}</b><br>%{{x|%Y-%m-%d}}"
+                                       f"<br>%{{y:.1f}}<extra></extra>"),
+                    ))
+                fig_k.update_layout(
+                    template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                    height=380, margin=dict(l=0, r=0, t=44, b=0),
+                    title=dict(text=f"KODEX ETF 기반 누적 성과 ({y0k}~{y1k})",
+                               font=dict(size=13, color="#f1f5f9")),
+                    legend=dict(orientation="h", y=1.08, x=0, font=dict(size=11)),
+                    xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                               tickfont=dict(size=10, color="#9ca3af")),
+                    yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                               tickfont=dict(size=10)),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_k, use_container_width=True)
+
+                st.markdown("#### 📅 월별 수익률 히트맵 (전략8 KODEX)")
+                st.markdown(_monthly_heatmap_html(s8_k), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
