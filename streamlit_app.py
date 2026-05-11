@@ -4110,6 +4110,18 @@ def main():
         w_cash8 = round(1.0 - w_sp8 - w_nq8 - w_ko8 - w_kq8 - w_cs8 - 0.20 - 0.10 - 0.10, 10)
         total_stk8 = int((w_sp8 + w_nq8 + w_ko8 + w_kq8 + w_cs8) * 100)
 
+        # ── 다음 시즌 비중 계산 ──
+        next_season8  = "May-Oct" if season == "Nov-Apr" else "Nov-Apr"
+        next_sig_yr8  = sig_year + 1 if season == "Nov-Apr" else sig_year
+        next_digit8   = next_sig_yr8 % 10
+        sp_inv8_nx = next_digit8 in (strategies["sp500"]["inv_na"]  if next_season8 == "Nov-Apr" else strategies["sp500"]["inv_mo"])
+        ko_inv8_nx = next_digit8 in (strategies["kospi"]["inv_na"]  if next_season8 == "Nov-Apr" else strategies["kospi"]["inv_mo"])
+        cs_inv8_nx = next_digit8 in (strategies["csi300"]["inv_na"] if next_season8 == "Nov-Apr" else strategies["csi300"]["inv_mo"])
+        w_sp8_nx  = 0.10; w_nq8_nx  = 0.10 if sp_inv8_nx else 0.0
+        w_ko8_nx  = 0.10; w_kq8_nx  = 0.10 if ko_inv8_nx else 0.0
+        w_cs8_nx  = 0.20 if cs_inv8_nx else 0.10
+        w_cash8_nx = round(1.0 - w_sp8_nx - w_nq8_nx - w_ko8_nx - w_kq8_nx - w_cs8_nx - 0.20 - 0.10 - 0.10, 10)
+
         # 다음 리밸런싱
         if season == "Nov-Apr":
             nrb_year = today.year + 1 if today.month <= 4 else today.year
@@ -4179,35 +4191,50 @@ def main():
             unsafe_allow_html=True,
         )
 
-        # ETF 배분 테이블
+        # ETF 배분 테이블  (현재비중, 다음시즌비중)
         alloc_data = [
-            ("🇺🇸 KODEX 미국S&P500",          "379800", w_sp8,   "SP500 투자시즌" if sp_inv8 else "─",               True),
-            ("💻 KODEX 미국나스닥100",           "379810", w_nq8,   "SP500 투자시즌 추가" if sp_inv8 else "비투자 (0%)", sp_inv8),
-            ("🇰🇷 KODEX 200",                   "069500", w_ko8,   "KOSPI 투자시즌" if ko_inv8 else "─",               True),
-            ("📱 KODEX 코스닥150",               "229200", w_kq8,   "KOSPI 투자시즌 추가" if ko_inv8 else "비투자 (0%)", ko_inv8),
-            ("🇨🇳 KODEX 차이나CSI300",          "168580", w_cs8,   "CSI300 투자시즌 20%" if cs_inv8 else "비투자 10%",  True),
-            ("🥇 ACE KRX금현물",             "411060", 0.20,
-             "고정 20%", True),
-            ("🏦 KODEX 국고채3년 (현금대체)", "114820", w_cash8,
-             f"현금대체 {int(w_cash8*100)}%", True),
-            ("📊 KODEX 국채선물10년 (한국)",  "148070", 0.10,
-             "고정 10%", True),
-            ("🌐 KODEX 미국10년국채선물",      "304660", 0.10,
-             "고정 10%", True),
+            ("🇺🇸 KODEX 미국S&P500",          "379800", w_sp8,    w_sp8_nx,    "SP500 투자시즌" if sp_inv8 else "─",               True),
+            ("💻 KODEX 미국나스닥100",           "379810", w_nq8,    w_nq8_nx,    "SP500 투자시즌 추가" if sp_inv8 else "비투자 (0%)", sp_inv8),
+            ("🇰🇷 KODEX 200",                   "069500", w_ko8,    w_ko8_nx,    "KOSPI 투자시즌" if ko_inv8 else "─",               True),
+            ("📱 KODEX 코스닥150",               "229200", w_kq8,    w_kq8_nx,    "KOSPI 투자시즌 추가" if ko_inv8 else "비투자 (0%)", ko_inv8),
+            ("🇨🇳 KODEX 차이나CSI300",          "168580", w_cs8,    w_cs8_nx,    "CSI300 투자시즌 20%" if cs_inv8 else "비투자 10%",  True),
+            ("🥇 ACE KRX금현물",                "411060", 0.20,     0.20,        "고정 20%",                                         True),
+            ("🏦 KODEX 국고채3년 (현금대체)",    "114820", w_cash8,  w_cash8_nx,  f"현금대체 {int(w_cash8*100)}%",                     True),
+            ("📊 KODEX 국채선물10년 (한국)",     "148070", 0.10,     0.10,        "고정 10%",                                         True),
+            ("🌐 KODEX 미국10년국채선물",         "304660", 0.10,     0.10,        "고정 10%",                                         True),
         ]
+
+        # 다음 시즌 레이블 (헤더용)
+        nx_lbl = f"다음 ({next_season8[:3]})"
+
         th_s = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
                 "font-size:11px;font-weight:700")
         t_html = ('<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px;">'
                   f'<tr>'
                   f'<th style="{th_s};text-align:left">ETF</th>'
                   f'<th style="{th_s};text-align:center">티커</th>'
-                  f'<th style="{th_s};text-align:center">비중</th>'
+                  f'<th style="{th_s};text-align:center">현재 비중</th>'
+                  f'<th style="{th_s};text-align:center">{nx_lbl} 비중</th>'
                   f'<th style="{th_s}">비고</th></tr>')
-        for etf_nm, tkr, wt, note, active in alloc_data:
+        for etf_nm, tkr, wt, wt_nx, note, active in alloc_data:
             row_bg = "#0d1117" if active else "#080c10"
-            wt_clr = "#34d399" if wt > 0.05 else ("#fb923c" if wt > 0.001 else "#374151")
-            nm_clr = "#f1f5f9" if active else "#4b5563"
-            wt_txt = f"{wt*100:.0f}%" if wt > 0.001 else "0%"
+            wt_clr  = "#34d399" if wt    > 0.05 else ("#fb923c" if wt    > 0.001 else "#374151")
+            nm_clr  = "#f1f5f9" if active else "#4b5563"
+            wt_txt  = f"{wt*100:.0f}%"    if wt    > 0.001 else "0%"
+            nx_txt  = f"{wt_nx*100:.0f}%" if wt_nx > 0.001 else "0%"
+
+            # 다음 시즌 비중 색상 + 변화 화살표
+            diff = round(wt_nx - wt, 6)
+            if diff > 0.005:
+                nx_clr  = "#34d399"
+                arrow   = f'<span style="color:#34d399;font-size:10px;margin-left:3px;">▲</span>'
+            elif diff < -0.005:
+                nx_clr  = "#f87171"
+                arrow   = f'<span style="color:#f87171;font-size:10px;margin-left:3px;">▼</span>'
+            else:
+                nx_clr  = "#94a3b8"
+                arrow   = ""
+
             t_html += (
                 f'<tr style="background:{row_bg};border-bottom:1px solid #1e2a3a;">'
                 f'<td style="padding:6px 10px;color:{nm_clr}">{etf_nm}</td>'
@@ -4215,6 +4242,8 @@ def main():
                 f'font-family:monospace">{tkr}</td>'
                 f'<td style="padding:6px 10px;text-align:center;color:{wt_clr};'
                 f'font-weight:800;font-size:14px">{wt_txt}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:{nx_clr};'
+                f'font-weight:800;font-size:14px">{nx_txt}{arrow}</td>'
                 f'<td style="padding:6px 10px;color:#9ca3af">{note}</td>'
                 f'</tr>'
             )
