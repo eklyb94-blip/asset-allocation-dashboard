@@ -3866,6 +3866,138 @@ def main():
             html += '</table></div>'
             return html
 
+        # ── 헬퍼: MDD 이벤트 탐지 ──
+        def _dd_events(series, top_n=20, min_pct=-2.0):
+            """고점→저점→회복 사이클 탐지, 낙폭 기준 상위 top_n 반환"""
+            if series is None or len(series) < 10:
+                return []
+            peak_i  = 0
+            peak_v  = float(series.iloc[0])
+            trough_i = 0
+            trough_v = peak_v
+            in_dd   = False
+            events  = []
+
+            for i in range(len(series)):
+                v = float(series.iloc[i])
+                if not in_dd:
+                    if v >= peak_v:
+                        peak_i = i; peak_v = v
+                        trough_i = i; trough_v = v
+                    else:
+                        if (v - peak_v) / peak_v * 100 <= min_pct:
+                            in_dd = True
+                            trough_i = i; trough_v = v
+                else:
+                    if v < trough_v:
+                        trough_i = i; trough_v = v
+                    if v >= peak_v:
+                        depth = (trough_v - peak_v) / peak_v * 100
+                        events.append({
+                            "고점일":     series.index[peak_i].strftime("%Y-%m-%d"),
+                            "저점일":     series.index[trough_i].strftime("%Y-%m-%d"),
+                            "낙폭(%)":    round(depth, 1),
+                            "하락기간(일)": (series.index[trough_i] - series.index[peak_i]).days,
+                            "회복일":     series.index[i].strftime("%Y-%m-%d"),
+                            "회복기간(일)": (series.index[i] - series.index[trough_i]).days,
+                        })
+                        in_dd = False
+                        peak_i = i; peak_v = v
+                        trough_i = i; trough_v = v
+
+            if in_dd and trough_i > peak_i:
+                depth = (trough_v - peak_v) / peak_v * 100
+                events.append({
+                    "고점일":     series.index[peak_i].strftime("%Y-%m-%d"),
+                    "저점일":     series.index[trough_i].strftime("%Y-%m-%d"),
+                    "낙폭(%)":    round(depth, 1),
+                    "하락기간(일)": (series.index[trough_i] - series.index[peak_i]).days,
+                    "회복일":     "미회복",
+                    "회복기간(일)": None,
+                })
+
+            events.sort(key=lambda x: x["낙폭(%)"])
+            return events[:top_n]
+
+        # ── 헬퍼: MDD 차트 생성 ──
+        def _make_dd_fig(series_list, title):
+            """[(series, name, color), ...] → 낙폭 시계열 Figure"""
+            fig = go.Figure()
+            for i, (s, nm, clr) in enumerate(series_list):
+                dd = (s - s.cummax()) / s.cummax() * 100
+                dd = dd.resample("W").last()
+                if i == 0:   # 전략8: 채우기
+                    fig.add_trace(go.Scatter(
+                        x=dd.index, y=dd.values, name=nm, mode="lines",
+                        fill="tozeroy",
+                        fillcolor="rgba(56,189,248,0.12)",
+                        line=dict(color=clr, width=1.5),
+                        hovertemplate=f"<b>{nm}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:.1f}}%<extra></extra>",
+                    ))
+                else:        # 벤치마크: 점선
+                    fig.add_trace(go.Scatter(
+                        x=dd.index, y=dd.values, name=nm, mode="lines",
+                        line=dict(color=clr, width=1.0, dash="dot"),
+                        hovertemplate=f"<b>{nm}</b><br>%{{x|%Y-%m-%d}}<br>%{{y:.1f}}%<extra></extra>",
+                    ))
+            fig.add_hline(y=0, line_color="#374151", line_width=0.5)
+            fig.update_layout(
+                template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                height=280, margin=dict(l=0, r=0, t=44, b=0),
+                title=dict(text=title, font=dict(size=13, color="#f1f5f9")),
+                legend=dict(orientation="h", y=1.12, x=0, font=dict(size=11)),
+                xaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                           tickfont=dict(size=10, color="#9ca3af")),
+                yaxis=dict(showgrid=True, gridcolor="#1e2a3a",
+                           tickformat=".0f", ticksuffix="%",
+                           tickfont=dict(size=10)),
+                hovermode="x unified",
+            )
+            return fig
+
+        # ── 헬퍼: MDD 이벤트 테이블 HTML ──
+        def _dd_table_html(events):
+            if not events:
+                return "<p style='color:#9ca3af'>이벤트 없음</p>"
+            th = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
+                  "font-size:11px;font-weight:700;text-align:center")
+            html = ('<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+                    f'<tr>'
+                    f'<th style="{th};text-align:center">순위</th>'
+                    f'<th style="{th};text-align:left">고점일</th>'
+                    f'<th style="{th};text-align:left">저점일</th>'
+                    f'<th style="{th}">낙폭(%)</th>'
+                    f'<th style="{th}">하락기간(일)</th>'
+                    f'<th style="{th};text-align:left">회복일</th>'
+                    f'<th style="{th}">회복기간(일)</th>'
+                    f'</tr>')
+            for rank, ev in enumerate(events, 1):
+                depth = ev["낙폭(%)"]
+                t = min(abs(depth) / 30, 1.0)
+                row_bg = f"rgb({int(30+20*t)},{int(5)},{int(5)})"
+                dep_clr = "#f87171"
+                rec = ev["회복일"]
+                rec_d = ev["회복기간(일)"]
+                rec_txt = str(rec_d) if rec_d is not None else "─"
+                rec_clr = "#34d399" if rec != "미회복" else "#fb923c"
+                html += (
+                    f'<tr style="background:{row_bg};border-bottom:1px solid #1e2a3a;">'
+                    f'<td style="padding:5px 10px;text-align:center;color:#9ca3af;font-weight:700">'
+                    f'{rank}</td>'
+                    f'<td style="padding:5px 10px;color:#f1f5f9">{ev["고점일"]}</td>'
+                    f'<td style="padding:5px 10px;color:#f1f5f9">{ev["저점일"]}</td>'
+                    f'<td style="padding:5px 10px;text-align:center;color:{dep_clr};'
+                    f'font-weight:800">{depth:.1f}%</td>'
+                    f'<td style="padding:5px 10px;text-align:center;color:#94a3b8">'
+                    f'{ev["하락기간(일)"]}</td>'
+                    f'<td style="padding:5px 10px;color:{rec_clr}">{rec}</td>'
+                    f'<td style="padding:5px 10px;text-align:center;color:#94a3b8">'
+                    f'{rec_txt}</td>'
+                    f'</tr>'
+                )
+            html += '</table>'
+            return html
+
         # ── 헬퍼: KODEX ETF 기반 전략8 일별 포트폴리오 ──
         def _daily_pf_series_kodex():
             """KODEX ETF 가격 기반 전략8 일별 시리즈 (2021~)"""
@@ -4147,6 +4279,21 @@ def main():
                 )
                 st.plotly_chart(fig_k, use_container_width=True)
 
+                # MDD 차트
+                st.markdown("#### 📉 낙폭(Drawdown) 추이")
+                fig_ddk = _make_dd_fig(
+                    [(s8_k, "🏦 전략8 KODEX", "#38bdf8"),
+                     (sp_k, "🇺🇸 S&P500",    "#6366f1"),
+                     (ko_k, "🇰🇷 KOSPI",     "#22c55e")],
+                    "고점 대비 낙폭 (%)",
+                )
+                st.plotly_chart(fig_ddk, use_container_width=True)
+
+                # MDD 상위 20개 표
+                st.markdown("#### 🏆 MDD 상위 20개 (전략8 KODEX)")
+                evk = _dd_events(s8_k, top_n=20, min_pct=-2.0)
+                st.markdown(_dd_table_html(evk), unsafe_allow_html=True)
+
                 # 월별 수익률 히트맵
                 st.markdown("#### 📅 월별 수익률 히트맵 (전략8 KODEX)")
                 st.markdown(_monthly_heatmap_html(s8_k), unsafe_allow_html=True)
@@ -4221,6 +4368,21 @@ def main():
                     hovermode="x unified",
                 )
                 st.plotly_chart(fig_h, use_container_width=True)
+
+                # MDD 차트
+                st.markdown("#### 📉 낙폭(Drawdown) 추이")
+                fig_ddh = _make_dd_fig(
+                    [(s8_h,  "🌏 전략8",    "#38bdf8"),
+                     (sp_bh, "🇺🇸 S&P500", "#6366f1"),
+                     (ko_bh, "🇰🇷 KOSPI",  "#22c55e")],
+                    "고점 대비 낙폭 (%)",
+                )
+                st.plotly_chart(fig_ddh, use_container_width=True)
+
+                # MDD 상위 20개 표
+                st.markdown("#### 🏆 MDD 상위 20개 (전략8)")
+                evh = _dd_events(s8_h, top_n=20, min_pct=-3.0)
+                st.markdown(_dd_table_html(evh), unsafe_allow_html=True)
 
                 # 월별 수익률 히트맵
                 st.markdown("#### 📅 월별 수익률 히트맵 (전략8)")
