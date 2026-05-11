@@ -125,6 +125,7 @@ def load_raw():
     _ticker_map = {
         "kosdaq": ("^KQ11",     "1997-01-01", "KOSDAQ"),
         "krbond": ("114820.KS", "2009-01-01", "KRBOND"),
+        "kr10y":  ("148070.KS", "2012-01-01", "KR10Y"),   # KODEX 국채선물10년
     }
 
     def dl(ticker, start, csv_name):
@@ -314,6 +315,7 @@ def load_kodex_etfs():
         "csi300": "168580.KS",   # KODEX 차이나CSI300
         "gold":   "411060.KS",   # ACE KRX금현물
         "krbond": "114820.KS",   # KODEX 국고채3년
+        "kr10y":  "148070.KS",   # KODEX 국채선물10년 (한국 10년)
         "us10y":  "304660.KS",   # KODEX 미국10년국채선물
     }
     START = "2021-01-01"
@@ -440,6 +442,7 @@ def compute_strategy():
         "gold":   mr(raw["gold"]),
         "us30y":  mr_bond(raw["us30y"]),
         "krbond": mr(raw["krbond"]),
+        "kr10y":  mr(raw["kr10y"]) if not raw["kr10y"].empty else pd.Series(dtype=float),
     }
 
     # ── 반기 수익률 ──
@@ -558,39 +561,41 @@ def compute_strategy():
         ko_info = strategies["kospi"]
         cs_info = strategies["csi300"]
 
-        sp_na, sp_mo = seas["sp500"]
-        nq_na, nq_mo = seas["nasdaq"]   # 나스닥 (SP500 투자시즌 연동)
-        ko_na, ko_mo = seas["kospi"]
-        kq_na, kq_mo = seas["kosdaq"]   # 코스닥 (KOSPI 투자시즌 연동)
-        cs_na, cs_mo = seas["csi300"]
-        kr_na, kr_mo = seas["krbond"]
-        us_na, us_mo = seas["us30y"]
-        g_na,  g_mo  = seas["gold"]
+        sp_na, sp_mo   = seas["sp500"]
+        nq_na, nq_mo   = seas["nasdaq"]   # 나스닥 (SP500 투자시즌 연동)
+        ko_na, ko_mo   = seas["kospi"]
+        kq_na, kq_mo   = seas["kosdaq"]   # 코스닥 (KOSPI 투자시즌 연동)
+        cs_na, cs_mo   = seas["csi300"]
+        kr_na, kr_mo   = seas["krbond"]
+        kr10_na, kr10_mo = seas["kr10y"]
+        us_na, us_mo   = seas["us30y"]
+        g_na,  g_mo    = seas["gold"]
 
         records = []
         v_s8 = v_bhmax = v_bhmin = 100.0
 
         for y in sorted(set(sp_na.index) | set(sp_mo.index)):
             digit = y % 10
-            for season, sp_df, nq_df, ko_df, kq_df, cs_df, kr_df, us_df, gdf, \
+            for season, sp_df, nq_df, ko_df, kq_df, cs_df, kr_df, kr10_df, us_df, gdf, \
                     sp_inv_set, ko_inv_set, cs_inv_set in [
-                ("Nov-Apr", sp_na, nq_na, ko_na, kq_na, cs_na, kr_na, us_na, g_na,
+                ("Nov-Apr", sp_na, nq_na, ko_na, kq_na, cs_na, kr_na, kr10_na, us_na, g_na,
                  sp_info["inv_na"], ko_info["inv_na"], cs_info["inv_na"]),
-                ("May-Oct", sp_mo, nq_mo, ko_mo, kq_mo, cs_mo, kr_mo, us_mo, g_mo,
+                ("May-Oct", sp_mo, nq_mo, ko_mo, kq_mo, cs_mo, kr_mo, kr10_mo, us_mo, g_mo,
                  sp_info["inv_mo"], ko_info["inv_mo"], cs_info["inv_mo"]),
             ]:
                 if y not in sp_df.index: continue
                 if y not in gdf.index:   continue
                 if y not in us_df.index: continue
 
-                r_sp = float(sp_df.loc[y, "ret"])
-                r_nq = float(nq_df.loc[y, "ret"]) if y in nq_df.index else r_sp
-                r_ko = float(ko_df.loc[y, "ret"]) if y in ko_df.index else r_sp
-                r_kq = float(kq_df.loc[y, "ret"]) if y in kq_df.index else r_ko
-                r_cs = float(cs_df.loc[y, "ret"]) if y in cs_df.index else r_sp
-                r_g  = float(gdf.loc[y, "ret"])
-                r_kr = float(kr_df.loc[y, "ret"]) if y in kr_df.index else 0.0
-                r_us = float(us_df.loc[y, "ret"])
+                r_sp  = float(sp_df.loc[y, "ret"])
+                r_nq  = float(nq_df.loc[y, "ret"])  if y in nq_df.index  else r_sp
+                r_ko  = float(ko_df.loc[y, "ret"])  if y in ko_df.index  else r_sp
+                r_kq  = float(kq_df.loc[y, "ret"])  if y in kq_df.index  else r_ko
+                r_cs  = float(cs_df.loc[y, "ret"])  if y in cs_df.index  else r_sp
+                r_g   = float(gdf.loc[y, "ret"])
+                r_kr  = float(kr_df.loc[y, "ret"])  if y in kr_df.index  else 0.0
+                r_kr10= float(kr10_df.loc[y, "ret"])if y in kr10_df.index else r_kr
+                r_us  = float(us_df.loc[y, "ret"])
 
                 sp_inv = digit in sp_inv_set
                 ko_inv = digit in ko_inv_set
@@ -606,10 +611,10 @@ def compute_strategy():
                 # CSI300: 투자시즌 20% / 비투자 10%
                 w_cs = 0.20 if cs_inv else 0.10
 
-                # 금20% + 한국채10% + 미국채10% 고정, 현금 → KODEX 국고채3년(한국채) 운용
-                w_cash  = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
+                # 금20% + 한국채3년10% + 한국채10년5% + 미국채10년5% 고정, 현금 → 국고채3년 운용
+                w_cash  = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.05 - 0.05, 10)
                 r_s8    = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                           + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us
+                           + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.05*r_kr10 + 0.05*r_us
                            + w_cash*r_kr)   # 현금 → 국고채3년 운용
                 r_bhmax = 0.50*r_sp + 0.25*r_g + 0.25*r_us
                 r_bhmin = 0.25*r_sp + 0.25*r_g + 0.25*r_us
@@ -1178,25 +1183,29 @@ def main():
             if sim_s8.empty:
                 return {}
 
-            d_sp = raw["sp500"].pct_change().dropna()
-            d_nq = raw["nasdaq"].pct_change().dropna()
-            d_ko = raw["kospi"].pct_change().dropna()
-            d_kq = raw["kosdaq"].pct_change().dropna()
-            d_cs = raw["csi300"].pct_change().dropna()
-            d_g  = raw["gold"].pct_change().dropna()
-            d_kr = raw["krbond"].pct_change().dropna()
-            d_us = (-DURATION_US * raw["us30y"].diff() / 100).dropna()
+            d_sp  = raw["sp500"].pct_change().dropna()
+            d_nq  = raw["nasdaq"].pct_change().dropna()
+            d_ko  = raw["kospi"].pct_change().dropna()
+            d_kq  = raw["kosdaq"].pct_change().dropna()
+            d_cs  = raw["csi300"].pct_change().dropna()
+            d_g   = raw["gold"].pct_change().dropna()
+            d_kr  = raw["krbond"].pct_change().dropna()
+            d_kr10= raw["kr10y"].pct_change().dropna() if not raw["kr10y"].empty \
+                    else pd.Series(dtype=float)
+            d_us  = (-DURATION_US * raw["us30y"].diff() / 100).dropna()
 
-            for s in [d_sp, d_nq, d_ko, d_kq, d_cs, d_g, d_kr, d_us]:
-                s.index = pd.to_datetime(s.index).tz_localize(None)
+            for s in [d_sp, d_nq, d_ko, d_kq, d_cs, d_g, d_kr, d_kr10, d_us]:
+                if not s.empty:
+                    s.index = pd.to_datetime(s.index).tz_localize(None)
 
-            nq_idx = set(d_nq.index)
-            ko_idx = set(d_ko.index)
-            kq_idx = set(d_kq.index)
-            cs_idx = set(d_cs.index)
-            g_idx  = set(d_g.index)
-            kr_idx = set(d_kr.index)
-            us_idx = set(d_us.index)
+            nq_idx  = set(d_nq.index)
+            ko_idx  = set(d_ko.index)
+            kq_idx  = set(d_kq.index)
+            cs_idx  = set(d_cs.index)
+            g_idx   = set(d_g.index)
+            kr_idx  = set(d_kr.index)
+            kr10_idx= set(d_kr10.index)
+            us_idx  = set(d_us.index)
 
             # 3개 메인 지수 투자 맵
             sp_sim = sims.get("sp500",  pd.DataFrame())
@@ -1229,8 +1238,9 @@ def main():
                 r_kq = float(d_kq[dt]) if dt in kq_idx else r_ko
                 r_cs = float(d_cs[dt]) if dt in cs_idx else r_sp
                 r_g  = float(d_g[dt])  if dt in g_idx  else 0.0
-                r_kr = float(d_kr[dt]) if dt in kr_idx else 0.0
-                r_us = float(d_us[dt]) if dt in us_idx else 0.0
+                r_kr  = float(d_kr[dt])   if dt in kr_idx   else 0.0
+                r_kr10= float(d_kr10[dt]) if dt in kr10_idx else r_kr
+                r_us  = float(d_us[dt])   if dt in us_idx   else 0.0
 
                 sp_inv = sp_inv_map.get((sy, season), False)
                 ko_inv = ko_inv_map.get((sy, season), sp_inv)
@@ -1253,10 +1263,11 @@ def main():
                     bl_stk = bl_gld = bl_bnd = bl_csh = tot_min * 0.25
                 prev_season_key = season_key
 
-                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
+                # 금20% + 한국채3년10% + 한국채10년5% + 미국채10년5% 고정
+                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.05 - 0.05, 10)
                 r_s8 = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us
-                        + w_cash*r_kr)   # 현금 → KODEX 국고채3년 운용
+                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.05*r_kr10 + 0.05*r_us
+                        + w_cash*r_kr)   # 현금 → 국고채3년 운용
                 v["전략8"] *= (1 + r_s8)
 
                 bm_stk *= (1+r_sp); bm_gld *= (1+r_g); bm_bnd *= (1+r_us)
@@ -1418,7 +1429,7 @@ def main():
                     f'</div>'
                     f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
                     f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준 · '
-                    f'금20% + 한국채10% + 미국채10% 고정 · 3지수 투자시즌 합의에 따라 주식 30~60% 동적조절</div>',
+                    f'금20% + 한국채3년10% + 한국채10년5% + 미국채10년5% 고정 · 3지수 투자시즌 합의에 따라 주식 30~60% 동적조절</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -4014,12 +4025,13 @@ def main():
             d_sp = _pc("sp500")
             if d_sp.empty:
                 return {}
-            d_nq = _pc("nasdaq"); d_ko = _pc("kospi"); d_kq = _pc("kosdaq")
-            d_cs = _pc("csi300"); d_g  = _pc("gold"); d_kr = _pc("krbond"); d_us = _pc("us10y")
+            d_nq  = _pc("nasdaq"); d_ko = _pc("kospi"); d_kq = _pc("kosdaq")
+            d_cs  = _pc("csi300"); d_g  = _pc("gold")
+            d_kr  = _pc("krbond"); d_kr10 = _pc("kr10y"); d_us = _pc("us10y")
 
-            nq_idx = set(d_nq.index); ko_idx = set(d_ko.index); kq_idx = set(d_kq.index)
-            cs_idx = set(d_cs.index); g_idx  = set(d_g.index)
-            kr_idx = set(d_kr.index); us_idx = set(d_us.index)
+            nq_idx  = set(d_nq.index);  ko_idx = set(d_ko.index); kq_idx = set(d_kq.index)
+            cs_idx  = set(d_cs.index);  g_idx  = set(d_g.index)
+            kr_idx  = set(d_kr.index);  kr10_idx = set(d_kr10.index); us_idx = set(d_us.index)
 
             def _inv_map(key):
                 inv_na = strategies[key]["inv_na"]
@@ -4053,8 +4065,9 @@ def main():
                 r_kq = float(d_kq[dt]) if dt in kq_idx else r_ko
                 r_cs = float(d_cs[dt]) if dt in cs_idx else r_sp
                 r_g  = float(d_g[dt])  if dt in g_idx  else 0.0
-                r_kr = float(d_kr[dt]) if dt in kr_idx else 0.0
-                r_us = float(d_us[dt]) if dt in us_idx else 0.0
+                r_kr  = float(d_kr[dt])   if dt in kr_idx   else 0.0
+                r_kr10= float(d_kr10[dt]) if dt in kr10_idx else r_kr
+                r_us  = float(d_us[dt])   if dt in us_idx   else 0.0
 
                 sp_inv = sp_imap.get(sk, False)
                 ko_inv = ko_imap.get(sk, sp_inv)
@@ -4065,9 +4078,10 @@ def main():
                 w_cs = 0.20 if cs_inv else 0.10
                 prev_sk = sk
 
-                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.10, 10)
+                # 금20% + 한국채3년10% + 한국채10년5% + 미국채10년5%
+                w_cash = round(1.0 - w_sp - w_nq - w_ko - w_kq - w_cs - 0.20 - 0.10 - 0.05 - 0.05, 10)
                 r_pf = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
-                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.10*r_us + w_cash*r_kr)
+                        + w_cs*r_cs + 0.20*r_g + 0.10*r_kr + 0.05*r_kr10 + 0.05*r_us + w_cash*r_kr)
                 v["전략8_KODEX"] *= (1 + r_pf)
                 v["SP500"] *= (1 + r_sp)
                 v["KOSPI"] *= (1 + r_ko)
@@ -4176,8 +4190,10 @@ def main():
              "고정 20%", True),
             ("🏦 KODEX 국고채3년",           "114820", round(0.10 + w_cash8, 4),
              f"채권 10% + 현금대체 {int(w_cash8*100)}%", True),
-            ("🌐 KODEX 미국10년국채선물",     "304660", 0.10,
-             "고정 10%", True),
+            ("📊 KODEX 국채선물10년 (한국)", "148070", 0.05,
+             "고정 5%", True),
+            ("🌐 KODEX 미국10년국채선물",     "304660", 0.05,
+             "고정 5%", True),
         ]
         th_s = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
                 "font-size:11px;font-weight:700")
