@@ -4009,6 +4009,89 @@ def main():
             html += '</table>'
             return html
 
+        # ── 헬퍼: 매매 결과 통계 카드 ──
+        def _perf_stats_html(series, ko_series=None, kq_series=None):
+            """일별 가격 시리즈 → 통계 카드 HTML (7개 지표)"""
+            if series is None or len(series) < 20:
+                return ""
+            dr = series.pct_change().dropna()
+            mo_ret = series.resample("ME").last().pct_change().dropna()
+
+            # 샤프 비율 (연환산, 무위험이자율 제외)
+            sharpe = float(dr.mean() / dr.std() * np.sqrt(252)) if dr.std() > 0 else 0.0
+
+            # 일/월 표준편차
+            daily_std = float(dr.std() * 100)
+            mo_std    = float(mo_ret.std() * 100) if len(mo_ret) > 1 else 0.0
+
+            # 월 평균 손익률
+            mo_avg = float(mo_ret.mean() * 100) if len(mo_ret) > 0 else 0.0
+
+            # 일일 승률 (상승 / 보합 / 하락)
+            up   = int((dr >  0.0001).sum())
+            flat = int((dr.abs() <= 0.0001).sum())
+            dn   = int((dr < -0.0001).sum())
+            tot  = up + flat + dn
+            up_p, flat_p, dn_p = (up/tot*100, flat/tot*100, dn/tot*100) if tot > 0 else (0,0,0)
+
+            # 고점 대비 회복 비율 (전고점 이상인 날 / 전체 거래일)
+            at_peak = float((series >= series.cummax() * 0.9999).sum() / len(series) * 100)
+
+            # KOSPI / KOSDAQ 상관성
+            def _corr(base_dr, other):
+                if other is None or (hasattr(other, "empty") and other.empty):
+                    return None
+                o = other.copy()
+                if hasattr(o.index, "tz") and o.index.tz is not None:
+                    o.index = o.index.tz_localize(None)
+                else:
+                    o.index = pd.to_datetime(o.index).tz_localize(None)
+                o_dr = o.pct_change().dropna()
+                a, b = base_dr.align(o_dr, join="inner")
+                return float(a.corr(b)) if len(a) > 20 else None
+
+            corr_ko = _corr(dr, ko_series)
+            corr_kq = _corr(dr, kq_series)
+
+            # 카드 셀 렌더러
+            def cell(label, val_html, color="#f1f5f9", sub=None):
+                sub_h = (f'<div style="color:#6b7280;font-size:10px;margin-top:3px;">{sub}</div>'
+                         if sub else "")
+                return (
+                    f'<div style="background:#111827;border:1px solid #1e2a3a;border-radius:8px;'
+                    f'padding:14px 10px;text-align:center;">'
+                    f'<div style="color:#9ca3af;font-size:11px;margin-bottom:6px;">{label}</div>'
+                    f'<div style="color:{color};font-size:17px;font-weight:800;">{val_html}</div>'
+                    f'{sub_h}</div>'
+                )
+
+            sharpe_c = "#34d399" if sharpe >= 1.0 else ("#fbbf24" if sharpe >= 0.5 else "#f87171")
+            mo_c     = "#34d399" if mo_avg > 0 else "#f87171"
+            peak_c   = "#34d399" if at_peak >= 50 else "#fbbf24"
+
+            cells = [
+                cell("샤프 비율",       f"{sharpe:.2f}",  sharpe_c),
+                cell("일 표준편차",     f"{daily_std:.2f}%"),
+                cell("월 표준편차",     f"{mo_std:.2f}%"),
+                cell("월 평균 손익률",  f"{mo_avg:+.2f}%", mo_c),
+                cell("일일 승률",
+                     f"{up_p:.0f}% / {flat_p:.0f}% / {dn_p:.0f}%",
+                     "#f1f5f9", "상승 / 보합 / 하락"),
+                cell("고점 대비 회복 비율", f"{at_peak:.0f}%", peak_c,
+                     "전고점 이상인 날 비율"),
+            ]
+            if corr_ko is not None:
+                c_ = "#34d399" if abs(corr_ko) < 0.5 else "#fbbf24"
+                cells.append(cell("KOSPI 상관성",  f"{corr_ko:.2f}", c_))
+            if corr_kq is not None:
+                c_ = "#34d399" if abs(corr_kq) < 0.5 else "#fbbf24"
+                cells.append(cell("KOSDAQ 상관성", f"{corr_kq:.2f}", c_))
+
+            n_cols = min(len(cells), 4)
+            grid = (f'display:grid;grid-template-columns:repeat({n_cols},1fr);'
+                    f'gap:10px;margin-bottom:16px;')
+            return f'<div style="{grid}">{"".join(cells)}</div>'
+
         # ── 헬퍼: KODEX ETF 기반 전략8 일별 포트폴리오 ──
         def _daily_pf_series_kodex():
             """KODEX ETF 가격 기반 전략8 일별 시리즈 (2021~)"""
@@ -4297,6 +4380,15 @@ def main():
                     f"📌 KODEX/ACE ETF 실제 가격 기반 · {y0k} ~ {y1k} · 전략8 동일 로직 적용 "
                     f"· 벤치마크: KODEX 미국S&P500(379800) / KODEX 200(069500)")
 
+                # 매매 결과 통계
+                st.markdown("#### 📊 매매 결과 통계")
+                _ko_cl = raw["kospi"]["Close"]  if isinstance(raw["kospi"],  pd.DataFrame) else raw["kospi"]
+                _kq_cl = raw["kosdaq"]["Close"] if isinstance(raw["kosdaq"], pd.DataFrame) else raw["kosdaq"]
+                st.markdown(
+                    _perf_stats_html(s8_k, ko_series=_ko_cl, kq_series=_kq_cl),
+                    unsafe_allow_html=True,
+                )
+
                 # 누적 성과 차트
                 fig_k = go.Figure()
                 for s_k, nm_k, clr_k, w_k in [
@@ -4385,6 +4477,15 @@ def main():
                         unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
+
+                # 매매 결과 통계
+                st.markdown("#### 📊 매매 결과 통계")
+                _ko_cl_h = raw["kospi"]["Close"]  if isinstance(raw["kospi"],  pd.DataFrame) else raw["kospi"]
+                _kq_cl_h = raw["kosdaq"]["Close"] if isinstance(raw["kosdaq"], pd.DataFrame) else raw["kosdaq"]
+                st.markdown(
+                    _perf_stats_html(s8_h, ko_series=_ko_cl_h, kq_series=_kq_cl_h),
+                    unsafe_allow_html=True,
+                )
 
                 # 누적 성과 차트
                 fig_h = go.Figure()
