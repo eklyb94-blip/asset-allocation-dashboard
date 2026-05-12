@@ -4274,7 +4274,40 @@ def main():
             unsafe_allow_html=True,
         )
 
-        # ETF 배분 테이블  (현재비중, 다음시즌비중)
+        # ── 현재 비중: 시즌 시작 이후 가격 변동 반영 (drift) ──
+        _kodex_px   = load_kodex_etfs()
+        _season_ts  = pd.Timestamp(season_start)
+        _tkr_key    = {
+            "379800": "sp500",  "379810": "nasdaq", "069500": "kospi",
+            "229200": "kosdaq", "168580": "csi300", "411060": "gold",
+            "114820": "krbond", "148070": "kr10y",  "304660": "us10y",
+        }
+        _target_w   = {
+            "379800": w_sp8,   "379810": w_nq8,   "069500": w_ko8,
+            "229200": w_kq8,   "168580": w_cs8,   "411060": 0.20,
+            "114820": w_cash8, "148070": 0.10,    "304660": 0.10,
+        }
+        # 시즌 시작 → 최근 가격 수익률
+        _etf_ret = {}
+        for _tkr, _key in _tkr_key.items():
+            _s = _kodex_px.get(_key, pd.Series(dtype=float))
+            if _s.empty:
+                _etf_ret[_tkr] = 0.0
+                continue
+            _after = _s[_s.index >= _season_ts]
+            if _after.empty:
+                _etf_ret[_tkr] = 0.0
+                continue
+            _etf_ret[_tkr] = float(_s.iloc[-1]) / float(_after.iloc[0]) - 1.0
+        # 가치 성장 후 정규화 → 현재 비중
+        _val_now  = {t: _target_w[t] * (1 + _etf_ret.get(t, 0.0)) for t in _target_w}
+        _tot      = sum(_val_now.values())
+        _drift_w  = {t: _val_now[t] / _tot if _tot > 0 else _target_w[t] for t in _target_w}
+        # 최근 데이터 날짜
+        _sp_s = _kodex_px.get("sp500", pd.Series(dtype=float))
+        _last_date = _sp_s.index[-1].strftime("%Y-%m-%d") if not _sp_s.empty else "N/A"
+
+        # ETF 배분 테이블  (이번시즌비중 / 현재비중 / 다음시즌비중)
         alloc_data = [
             ("🇺🇸 KODEX 미국S&P500",          "379800", w_sp8,    w_sp8_nx,    "SP500 투자시즌" if sp_inv8 else "─",               True),
             ("💻 KODEX 미국나스닥100",           "379810", w_nq8,    w_nq8_nx,    "SP500 투자시즌 추가" if sp_inv8 else "비투자 (0%)", sp_inv8),
@@ -4287,51 +4320,56 @@ def main():
             ("🌐 KODEX 미국10년국채선물",         "304660", 0.10,     0.10,        "고정 10%",                                         True),
         ]
 
-        # 다음 시즌 레이블 (헤더용)
-        nx_lbl = f"다음 ({next_season8[:3]})"
+        nx_lbl = f"다음 시즌 비중 ({next_season8[:3]})"
+
+        def _arrow(diff):
+            if diff > 0.005:
+                return "#34d399", f'<span style="color:#34d399;font-size:10px;margin-left:3px;">▲</span>'
+            elif diff < -0.005:
+                return "#f87171", f'<span style="color:#f87171;font-size:10px;margin-left:3px;">▼</span>'
+            return "#94a3b8", ""
 
         th_s = ("background:#1e2a3a;padding:6px 10px;color:#9ca3af;"
                 "font-size:11px;font-weight:700")
-        t_html = ('<table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px;">'
-                  f'<tr>'
-                  f'<th style="{th_s};text-align:left">ETF</th>'
-                  f'<th style="{th_s};text-align:center">티커</th>'
-                  f'<th style="{th_s};text-align:center">현재 비중</th>'
-                  f'<th style="{th_s};text-align:center">{nx_lbl} 비중</th>'
-                  f'<th style="{th_s}">비고</th></tr>')
+        t_html = (
+            '<table style="width:100%;border-collapse:collapse;margin-bottom:4px;font-size:12px;">'
+            f'<tr>'
+            f'<th style="{th_s};text-align:left">ETF</th>'
+            f'<th style="{th_s};text-align:center">티커</th>'
+            f'<th style="{th_s};text-align:center">이번 시즌 비중</th>'
+            f'<th style="{th_s};text-align:center">현재 비중</th>'
+            f'<th style="{th_s};text-align:center">{nx_lbl}</th>'
+            f'<th style="{th_s}">비고</th></tr>'
+        )
         for etf_nm, tkr, wt, wt_nx, note, active in alloc_data:
-            row_bg = "#0d1117" if active else "#080c10"
-            wt_clr  = "#34d399" if wt    > 0.05 else ("#fb923c" if wt    > 0.001 else "#374151")
+            row_bg  = "#0d1117" if active else "#080c10"
             nm_clr  = "#f1f5f9" if active else "#4b5563"
+            wt_clr  = "#34d399" if wt > 0.05 else ("#fb923c" if wt > 0.001 else "#374151")
             wt_txt  = f"{wt*100:.0f}%"    if wt    > 0.001 else "0%"
             nx_txt  = f"{wt_nx*100:.0f}%" if wt_nx > 0.001 else "0%"
 
-            # 다음 시즌 비중 색상 + 변화 화살표
-            diff = round(wt_nx - wt, 6)
-            if diff > 0.005:
-                nx_clr  = "#34d399"
-                arrow   = f'<span style="color:#34d399;font-size:10px;margin-left:3px;">▲</span>'
-            elif diff < -0.005:
-                nx_clr  = "#f87171"
-                arrow   = f'<span style="color:#f87171;font-size:10px;margin-left:3px;">▼</span>'
-            else:
-                nx_clr  = "#94a3b8"
-                arrow   = ""
+            # 현재 비중 (drift)
+            dw      = _drift_w.get(tkr, wt)
+            dw_txt  = f"{dw*100:.1f}%"
+            dw_diff = round(dw - wt, 6)
+            dw_clr, dw_arrow = _arrow(dw_diff)
+
+            # 다음 시즌 변화 화살표
+            nx_clr, nx_arrow = _arrow(round(wt_nx - wt, 6))
 
             t_html += (
                 f'<tr style="background:{row_bg};border-bottom:1px solid #1e2a3a;">'
                 f'<td style="padding:6px 10px;color:{nm_clr}">{etf_nm}</td>'
-                f'<td style="padding:6px 10px;text-align:center;color:#94a3b8;'
-                f'font-family:monospace">{tkr}</td>'
-                f'<td style="padding:6px 10px;text-align:center;color:{wt_clr};'
-                f'font-weight:800;font-size:14px">{wt_txt}</td>'
-                f'<td style="padding:6px 10px;text-align:center;color:{nx_clr};'
-                f'font-weight:800;font-size:14px">{nx_txt}{arrow}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:#94a3b8;font-family:monospace">{tkr}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:{wt_clr};font-weight:800;font-size:14px">{wt_txt}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:{dw_clr};font-weight:800;font-size:14px">{dw_txt}{dw_arrow}</td>'
+                f'<td style="padding:6px 10px;text-align:center;color:{nx_clr};font-weight:800;font-size:14px">{nx_txt}{nx_arrow}</td>'
                 f'<td style="padding:6px 10px;color:#9ca3af">{note}</td>'
                 f'</tr>'
             )
         t_html += '</table>'
         st.markdown(t_html, unsafe_allow_html=True)
+        st.caption(f"📌 현재 비중: {_last_date} 종가 기준 · 시즌 시작({season_start.strftime('%Y-%m-%d')}) 이후 가격 변동 반영")
 
         st.markdown("---")
 
