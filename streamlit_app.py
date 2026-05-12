@@ -4010,7 +4010,7 @@ def main():
             return html
 
         # ── 헬퍼: 매매 결과 통계 카드 ──
-        def _perf_stats_html(series, ko_series=None, kq_series=None):
+        def _perf_stats_html(series, ko_series=None, sp_series=None):
             """일별 가격 시리즈 → 통계 카드 HTML (7개 지표)"""
             if series is None or len(series) < 20:
                 return ""
@@ -4037,7 +4037,7 @@ def main():
             # 고점 대비 회복 비율 (전고점 이상인 날 / 전체 거래일)
             at_peak = float((series >= series.cummax() * 0.9999).sum() / len(series) * 100)
 
-            # KOSPI / KOSDAQ 상관성
+            # KOSPI / SP500 상관성
             def _corr(base_dr, other):
                 if other is None or (hasattr(other, "empty") and other.empty):
                     return None
@@ -4051,7 +4051,7 @@ def main():
                 return float(a.corr(b)) if len(a) > 20 else None
 
             corr_ko = _corr(dr, ko_series)
-            corr_kq = _corr(dr, kq_series)
+            corr_kq = _corr(dr, sp_series)
 
             # 카드 셀 렌더러
             def cell(label, val_html, color="#f1f5f9", sub=None):
@@ -4085,7 +4085,7 @@ def main():
                 cells.append(cell("KOSPI 상관성",  f"{corr_ko:.2f}", c_))
             if corr_kq is not None:
                 c_ = "#34d399" if abs(corr_kq) < 0.5 else "#fbbf24"
-                cells.append(cell("KOSDAQ 상관성", f"{corr_kq:.2f}", c_))
+                cells.append(cell("S&P500 상관성", f"{corr_kq:.2f}", c_))
 
             n_cols = min(len(cells), 4)
             grid = (f'display:grid;grid-template-columns:repeat({n_cols},1fr);'
@@ -4383,9 +4383,9 @@ def main():
                 # 매매 결과 통계
                 st.markdown("#### 📊 매매 결과 통계")
                 _ko_cl = raw["kospi"]["Close"]  if isinstance(raw["kospi"],  pd.DataFrame) else raw["kospi"]
-                _kq_cl = raw["kosdaq"]["Close"] if isinstance(raw["kosdaq"], pd.DataFrame) else raw["kosdaq"]
+                _sp_cl = raw["sp500"]["Close"]  if isinstance(raw["sp500"],  pd.DataFrame) else raw["sp500"]
                 st.markdown(
-                    _perf_stats_html(s8_k, ko_series=_ko_cl, kq_series=_kq_cl),
+                    _perf_stats_html(s8_k, ko_series=_ko_cl, sp_series=_sp_cl),
                     unsafe_allow_html=True,
                 )
 
@@ -4481,9 +4481,9 @@ def main():
                 # 매매 결과 통계
                 st.markdown("#### 📊 매매 결과 통계")
                 _ko_cl_h = raw["kospi"]["Close"]  if isinstance(raw["kospi"],  pd.DataFrame) else raw["kospi"]
-                _kq_cl_h = raw["kosdaq"]["Close"] if isinstance(raw["kosdaq"], pd.DataFrame) else raw["kosdaq"]
+                _sp_cl_h = raw["sp500"]["Close"]  if isinstance(raw["sp500"],  pd.DataFrame) else raw["sp500"]
                 st.markdown(
-                    _perf_stats_html(s8_h, ko_series=_ko_cl_h, kq_series=_kq_cl_h),
+                    _perf_stats_html(s8_h, ko_series=_ko_cl_h, sp_series=_sp_cl_h),
                     unsafe_allow_html=True,
                 )
 
