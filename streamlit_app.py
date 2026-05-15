@@ -4051,62 +4051,77 @@ def main():
             )
 
             # ════════════════════════════════════════════════════════
-            # 고점 기준 경로 오버레이 + 유사 패턴 탐지
+            # 고점 전후 경로 오버레이 + 유사 패턴 탐지 (고점 ±20일)
             # ════════════════════════════════════════════════════════
-            st.markdown('<div class="section-title">📉 고점 이후 경로 비교 — 현재 위치 & 유사 패턴</div>', unsafe_allow_html=True)
-            st.caption("고점 = 0% 기준 · 각 선 = 하나의 하락 사이클 · 빨간 굵은 선 = 현재 KOSPI · 고점 대비 -5% 이상 하락 시 활성화")
+            st.markdown('<div class="section-title">📉 고점 전후 경로 비교 — 현재 위치 & 유사 패턴</div>', unsafe_allow_html=True)
+            st.caption("세로 점선 = 고점(0) 기준 · 음수 = 고점 이전 · 각 선 = 하나의 하락 사이클 · 빨간 굵은 선 = 현재 KOSPI · 고점 대비 -5% 이상 하락 시 활성화")
 
-            # ── 현재 KOSPI 경로 추출 ──
+            _PRE_DAYS = 20   # 고점 이전 표시 거래일
+
+            # ── 현재 KOSPI 경로 (고점 이전 20일 + 이후 오늘까지) ──
             _ko_ath2      = float(_ko_raw.cummax().iloc[-1])
             _ko_ath_dt2   = _ko_raw[_ko_raw == _ko_ath2].index[-1]
             _ko_now_dd    = (_ko_raw.iloc[-1] / _ko_ath2 - 1) * 100
-            _ko_active    = _ko_now_dd <= -5.0   # -5% 이상 하락 시 활성화
+            _ko_active    = _ko_now_dd <= -5.0
 
-            # 현재 경로 (고점 이후 오늘까지)
-            _ko_cur_path  = _ko_raw[_ko_raw.index >= _ko_ath_dt2]
-            _ko_cur_x     = list(range(len(_ko_cur_path)))
-            _ko_cur_y     = [(_ko_cur_path.iloc[i] / _ko_ath2 - 1) * 100 for i in range(len(_ko_cur_path))]
-            _ko_cur_days  = len(_ko_cur_path)  # 현재 경과 거래일 수
+            _ko_pre_raw   = _ko_raw[_ko_raw.index < _ko_ath_dt2].iloc[-_PRE_DAYS:]
+            _ko_post_raw  = _ko_raw[_ko_raw.index >= _ko_ath_dt2]
+            _ko_cur_days  = len(_ko_post_raw)   # 고점 이후 거래일 수 (고점 포함)
+            _pre_len      = len(_ko_pre_raw)
 
-            # ── 과거 사이클 경로 추출 (고점 기준) ──
-            _hist_paths = []   # {label, x, y, depth, dur, r1, r3, r12}
+            _ko_combined  = pd.concat([_ko_pre_raw, _ko_post_raw])
+            _ko_cur_x     = list(range(-_pre_len, len(_ko_post_raw)))
+            _ko_cur_y     = [(_ko_combined.iloc[i] / _ko_ath2 - 1) * 100 for i in range(len(_ko_combined))]
+            _ko_cur_dict  = {_ko_cur_x[i]: _ko_cur_y[i] for i in range(len(_ko_cur_x))}
+
+            # ── 과거 사이클 경로 (고점 이전 20일 + 이후 180일) ──
+            _hist_paths = []
             for _, row in ko_cyc.iterrows():
                 peak_dt   = pd.Timestamp(row["고점일"])
                 trough_dt = pd.Timestamp(row["저점일"])
-                # 고점부터 저점 이후 120일까지
-                _end_dt = trough_dt + pd.Timedelta(days=180)
-                _seg    = _ko_raw[(_ko_raw.index >= peak_dt) & (_ko_raw.index <= _end_dt)]
-                if len(_seg) < 5:
+                _before   = _ko_raw[_ko_raw.index < peak_dt].iloc[-_PRE_DAYS:]
+                _after    = _ko_raw[
+                    (_ko_raw.index >= peak_dt) &
+                    (_ko_raw.index <= trough_dt + pd.Timedelta(days=180))
+                ]
+                if len(_after) < 3:
                     continue
-                _base   = float(_seg.iloc[0])
+                _seg   = pd.concat([_before, _after])
+                _base  = float(_after.iloc[0])    # 고점가격으로 정규화
+                _pre_n = len(_before)
+                _x_vals = list(range(-_pre_n, len(_after)))   # peak = 0
                 _y_vals = [float(_seg.iloc[i]) / _base * 100 - 100 for i in range(len(_seg))]
-                _x_vals = list(range(len(_y_vals)))
+                _xy_dict = {_x_vals[i]: _y_vals[i] for i in range(len(_x_vals))}
                 _hist_paths.append({
-                    "label": str(row["고점일"])[:7],
-                    "x":     _x_vals,
-                    "y":     _y_vals,
-                    "depth": row["최대낙폭(%)"],
-                    "dur":   row["기간(일)"],
-                    "speed": row["낙폭속도(%/일)"],
-                    "r1":    row["1M(%)"],
-                    "r3":    row["3M(%)"],
-                    "r12":   row["12M(%)"],
+                    "label":   str(row["고점일"])[:7],
+                    "x":       _x_vals,
+                    "y":       _y_vals,
+                    "xy_dict": _xy_dict,
+                    "depth":   row["최대낙폭(%)"],
+                    "dur":     row["기간(일)"],
+                    "speed":   row["낙폭속도(%/일)"],
+                    "r1":      row["1M(%)"],
+                    "r3":      row["3M(%)"],
+                    "r12":     row["12M(%)"],
                 })
 
-            # ── 유사 패턴 탐지 (MSE 기반) ──
+            # ── 유사 패턴 탐지 (MSE — 고점 전후 공통 구간 비교) ──
             _similar = []
             if _ko_active and _ko_cur_days >= 2:
+                _cur_xs = set(_ko_cur_dict.keys())
                 for hp in _hist_paths:
-                    n = min(_ko_cur_days, len(hp["y"]))
-                    if n < 2:
+                    _common_xs = sorted(_cur_xs & set(hp["xy_dict"].keys()))
+                    if len(_common_xs) < 2:
                         continue
-                    mse = float(np.mean([(hp["y"][i] - _ko_cur_y[i])**2 for i in range(n)]))
+                    mse = float(np.mean(
+                        [(hp["xy_dict"][x] - _ko_cur_dict[x]) ** 2 for x in _common_xs]
+                    ))
                     _similar.append({"mse": mse, **hp})
                 _similar.sort(key=lambda x: x["mse"])
-                _similar = _similar[:3]   # TOP 3
+                _similar = _similar[:3]
 
             # ── 차트 그리기 ──
-            _SIM_COLORS = ["#f59e0b", "#34d399", "#a78bfa"]   # TOP3 색상
+            _SIM_COLORS = ["#f59e0b", "#34d399", "#a78bfa"]
 
             _fig_overlay = go.Figure()
 
@@ -4114,26 +4129,26 @@ def main():
             _sim_labels = {s["label"] for s in _similar}
             for hp in _hist_paths:
                 if hp["label"] in _sim_labels:
-                    continue   # TOP3는 나중에 별도로 그림
+                    continue
                 _fig_overlay.add_trace(go.Scatter(
                     x=hp["x"], y=hp["y"],
                     mode="lines",
                     line=dict(color="#374151", width=1),
-                    opacity=0.45,
+                    opacity=0.4,
                     showlegend=False,
                     hovertemplate=(
                         f"<b>{hp['label']}</b><br>"
                         f"낙폭: {hp['depth']:.1f}%  기간: {hp['dur']}일<br>"
-                        f"경과일: %{{x}}<br>고점대비: %{{y:.1f}}%<extra></extra>"
+                        f"고점 기준: %{{x}}일<br>고점대비: %{{y:.1f}}%<extra></extra>"
                     ),
                 ))
 
             # 2) 유사 TOP3 (컬러 굵은 선)
             for idx, sim in enumerate(_similar):
                 _sim_clr = _SIM_COLORS[idx]
-                r1_txt  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'],float) and np.isnan(sim['r1'])) else "N/A"
-                r3_txt  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'],float) and np.isnan(sim['r3'])) else "N/A"
-                r12_txt = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'],float) and np.isnan(sim['r12'])) else "N/A"
+                r1_txt  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'], float) and np.isnan(sim['r1'])) else "N/A"
+                r3_txt  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'], float) and np.isnan(sim['r3'])) else "N/A"
+                r12_txt = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'], float) and np.isnan(sim['r12'])) else "N/A"
                 _fig_overlay.add_trace(go.Scatter(
                     x=sim["x"], y=sim["y"],
                     mode="lines",
@@ -4144,23 +4159,25 @@ def main():
                         f"<b>TOP{idx+1} {sim['label']}</b><br>"
                         f"낙폭: {sim['depth']:.1f}%  기간: {sim['dur']}일<br>"
                         f"저점후 1M:{r1_txt}  3M:{r3_txt}  12M:{r12_txt}<br>"
-                        f"경과일: %{{x}}<br>고점대비: %{{y:.1f}}%<extra></extra>"
+                        f"고점 기준: %{{x}}일<br>고점대비: %{{y:.1f}}%<extra></extra>"
                     ),
                 ))
 
-            # 3) 평균선
+            # 3) 전체 평균선 (x 기준으로 정렬)
             if _hist_paths:
-                _max_len = max(len(hp["y"]) for hp in _hist_paths)
-                _avg_y   = [
-                    np.mean([hp["y"][i] for hp in _hist_paths if i < len(hp["y"])])
-                    for i in range(_max_len)
-                ]
+                _all_x_set = sorted(set(x for hp in _hist_paths for x in hp["xy_dict"]))
+                _avg_x, _avg_y = [], []
+                for _ax in _all_x_set:
+                    _vals = [hp["xy_dict"][_ax] for hp in _hist_paths if _ax in hp["xy_dict"]]
+                    if _vals:
+                        _avg_x.append(_ax)
+                        _avg_y.append(float(np.mean(_vals)))
                 _fig_overlay.add_trace(go.Scatter(
-                    x=list(range(_max_len)), y=_avg_y,
+                    x=_avg_x, y=_avg_y,
                     mode="lines",
                     name="━ 평균",
                     line=dict(color="#4b5563", width=2, dash="dot"),
-                    hovertemplate="<b>평균</b><br>경과일: %{x}<br>고점대비: %{y:.1f}%<extra></extra>",
+                    hovertemplate="<b>평균</b><br>고점 기준: %{x}일<br>고점대비: %{y:.1f}%<extra></extra>",
                 ))
 
             # 4) 현재 경로 (빨간 굵은 선)
@@ -4170,9 +4187,11 @@ def main():
                     mode="lines+markers",
                     name="▶ 현재 KOSPI",
                     line=dict(color="#f87171", width=3.5),
-                    marker=dict(size=5, color="#f87171",
-                                symbol=["circle"]*(_ko_cur_days-1)+["star"]),
-                    hovertemplate="<b>현재 KOSPI</b><br>경과일: %{x}<br>고점대비: %{y:.1f}%<extra></extra>",
+                    marker=dict(
+                        size=5, color="#f87171",
+                        symbol=["circle"] * (len(_ko_cur_x) - 1) + ["star"],
+                    ),
+                    hovertemplate="<b>현재 KOSPI</b><br>고점 기준: %{x}일<br>고점대비: %{y:.1f}%<extra></extra>",
                 ))
             else:
                 _fig_overlay.add_annotation(
@@ -4183,16 +4202,22 @@ def main():
                     bgcolor="#111827", bordercolor="#374151", borderpad=10,
                 )
 
-            # 0% 기준선
+            # 고점 기준선 (x=0 세로선) + 0% 수평선
+            _fig_overlay.add_vline(
+                x=0, line_dash="dot", line_color="#6b7280", line_width=1.5,
+                annotation_text="고점", annotation_position="top",
+                annotation_font=dict(color="#9ca3af", size=10),
+            )
             _fig_overlay.add_hline(y=0, line_dash="dash", line_color="#374151", line_width=1)
 
             _fig_overlay.update_layout(
                 template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
                 height=520, margin=dict(l=0, r=0, t=10, b=0),
                 xaxis=dict(
-                    title=dict(text="고점 이후 경과 거래일", font=dict(color="#6b7280", size=11)),
+                    title=dict(text="고점 기준 거래일 (음수=고점 이전, 0=고점, 양수=고점 이후)", font=dict(color="#6b7280", size=11)),
                     showgrid=True, gridcolor="#1e2a3a",
                     tickfont=dict(size=10, color="#9ca3af"),
+                    zeroline=False,
                 ),
                 yaxis=dict(
                     title=dict(text="고점 대비 수익률 (%)", font=dict(color="#6b7280", size=11)),
@@ -4206,14 +4231,18 @@ def main():
 
             # ── 유사 패턴 카드 ──
             if _ko_active and _similar:
+                _compare_days = len(_ko_cur_dict)   # 전후 포함 전체 비교일수
                 st.markdown('<div class="section-title">🔍 가장 유사한 과거 패턴 TOP 3</div>', unsafe_allow_html=True)
-                st.caption(f"현재 경로 {_ko_cur_days}일과 과거 사이클 처음 {_ko_cur_days}일 비교 (MSE 기준)")
+                st.caption(
+                    f"현재 경로 (고점 이전 {_pre_len}일 + 이후 {_ko_cur_days}일 = 총 {_compare_days}일) 기준 · "
+                    f"과거 사이클 동일 구간 비교 (MSE 최소 = 가장 유사)"
+                )
                 _sc1, _sc2, _sc3 = st.columns(3)
-                for idx, (col, sim) in enumerate(zip([_sc1,_sc2,_sc3], _similar)):
+                for idx, (col, sim) in enumerate(zip([_sc1, _sc2, _sc3], _similar)):
                     _card_clr = _SIM_COLORS[idx]
-                    r1  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'],float) and np.isnan(sim['r1'])) else "N/A"
-                    r3  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'],float) and np.isnan(sim['r3'])) else "N/A"
-                    r12 = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'],float) and np.isnan(sim['r12'])) else "N/A"
+                    r1  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'], float) and np.isnan(sim['r1'])) else "N/A"
+                    r3  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'], float) and np.isnan(sim['r3'])) else "N/A"
+                    r12 = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'], float) and np.isnan(sim['r12'])) else "N/A"
                     spd_txt = "빠른 하락" if sim["speed"] > 0.25 else "느린 하락"
                     with col:
                         st.markdown(
@@ -4239,37 +4268,29 @@ def main():
             # ── 유사 패턴 일별 데이터 테이블 ──
             if _ko_active and _similar:
                 st.markdown('<div class="section-title">📋 현재 vs 유사 패턴 일별 데이터</div>', unsafe_allow_html=True)
-                st.caption("고점 대비 누적 수익률(%) · 현재 데이터는 실제 날짜 표시 · 과거 패턴은 경과일 기준")
+                st.caption("고점 기준 거래일(음수=이전) · 고점대비 누적 수익률(%) · 현재 데이터는 실제 날짜 표시")
 
-                # 현재 경로 날짜 리스트
-                _cur_dates = [str(_ko_cur_path.index[i].date()) for i in range(len(_ko_cur_path))]
+                # 현재 경로 날짜 리스트 (_ko_combined 기준)
+                _cur_dates = [str(_ko_combined.index[i].date()) for i in range(len(_ko_combined))]
 
-                # 테이블 구성: 경과일 / 날짜(현재) / 현재% / TOP1% / TOP2% / TOP3%
+                # 테이블: x 기준으로 정렬, 현재 경로 전체 기간만 표시
                 _tbl_rows = []
-                _max_days = max(
-                    len(_ko_cur_y),
-                    *[len(s["y"]) for s in _similar]
-                )
-                # 현재 경로 기간만큼만 표시 (현재까지)
-                _show_days = len(_ko_cur_y)
-
-                for d in range(_show_days):
-                    row = {
-                        "경과일": d,
-                        "날짜(현재)": _cur_dates[d] if d < len(_cur_dates) else "",
-                        "현재 KOSPI(%)": round(_ko_cur_y[d], 2) if d < len(_ko_cur_y) else None,
+                for i, x in enumerate(_ko_cur_x):
+                    trow = {
+                        "고점기준일": x,
+                        "날짜(현재)": _cur_dates[i] if i < len(_cur_dates) else "",
+                        "현재 KOSPI(%)": round(_ko_cur_y[i], 2),
                     }
-                    for i, sim in enumerate(_similar):
-                        col_name = f"TOP{i+1} {sim['label']}(%)"
-                        row[col_name] = round(sim["y"][d], 2) if d < len(sim["y"]) else None
-                    _tbl_rows.append(row)
+                    for si, sim in enumerate(_similar):
+                        col_name = f"TOP{si+1} {sim['label']}(%)"
+                        trow[col_name] = round(sim["xy_dict"][x], 2) if x in sim["xy_dict"] else None
+                    _tbl_rows.append(trow)
 
                 _tbl_df = pd.DataFrame(_tbl_rows)
 
-                # 스타일: 양수=초록, 음수=빨강
                 def _style_path_tbl(df):
                     def _c(val):
-                        if not isinstance(val, float): return "color:#d1d5db"
+                        if not isinstance(val, (int, float)): return "color:#d1d5db"
                         if val > 0:   return "color:#34d399;font-weight:600"
                         if val < -10: return "color:#f87171;font-weight:700"
                         if val < 0:   return "color:#fca5a5"
@@ -4279,24 +4300,29 @@ def main():
                 st.dataframe(
                     _style_path_tbl(_tbl_df),
                     use_container_width=True,
-                    height=min(400, 36 + _show_days * 35),
+                    height=min(500, 36 + len(_tbl_rows) * 35),
                 )
 
-                # 현재 vs TOP3 괴리 요약
+                # 현재 vs TOP3 괴리 카드
                 _dev_cols = st.columns(len(_similar))
                 for i, (sim, col) in enumerate(zip(_similar, _dev_cols)):
-                    _n = min(len(_ko_cur_y), len(sim["y"]))
-                    _cur_last = _ko_cur_y[-1]
-                    _sim_last = sim["y"][_n - 1]
-                    _gap = _cur_last - _sim_last
-                    _gap_clr = "#34d399" if _gap > 0 else "#f87171"
+                    _cur_last  = _ko_cur_y[-1]
+                    _last_x    = _ko_cur_x[-1]
+                    _sim_last  = sim["xy_dict"].get(_last_x, None)
+                    _gap_clr   = "#34d399"
+                    _gap_txt   = "N/A"
+                    if _sim_last is not None:
+                        _gap     = _cur_last - _sim_last
+                        _gap_clr = "#34d399" if _gap > 0 else "#f87171"
+                        _gap_txt = f"{_gap:+.1f}%p"
                     with col:
                         st.markdown(
                             f'<div style="background:#111827;border:1px solid #1e2a3a;'
                             f'border-radius:8px;padding:10px 14px;text-align:center;">'
                             f'<div style="color:#6b7280;font-size:10px;">현재 vs TOP{i+1} {sim["label"]} 괴리</div>'
-                            f'<div style="color:{_gap_clr};font-size:20px;font-weight:700;">{_gap:+.1f}%p</div>'
-                            f'<div style="color:#4b5563;font-size:9px;">현재 {_cur_last:.1f}%  |  과거 {_sim_last:.1f}%</div>'
+                            f'<div style="color:{_gap_clr};font-size:20px;font-weight:700;">{_gap_txt}</div>'
+                            f'<div style="color:#4b5563;font-size:9px;">'
+                            f'현재 {_cur_last:.1f}%  |  과거 {_sim_last:.1f}%</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
