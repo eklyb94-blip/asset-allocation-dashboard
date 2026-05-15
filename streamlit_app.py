@@ -4236,6 +4236,71 @@ def main():
             elif not _ko_active:
                 st.info("KOSPI가 고점 대비 -5% 이상 하락하면 유사 패턴 TOP 3가 자동으로 표시됩니다.")
 
+            # ── 유사 패턴 일별 데이터 테이블 ──
+            if _ko_active and _similar:
+                st.markdown('<div class="section-title">📋 현재 vs 유사 패턴 일별 데이터</div>', unsafe_allow_html=True)
+                st.caption("고점 대비 누적 수익률(%) · 현재 데이터는 실제 날짜 표시 · 과거 패턴은 경과일 기준")
+
+                # 현재 경로 날짜 리스트
+                _cur_dates = [str(_ko_cur_path.index[i].date()) for i in range(len(_ko_cur_path))]
+
+                # 테이블 구성: 경과일 / 날짜(현재) / 현재% / TOP1% / TOP2% / TOP3%
+                _tbl_rows = []
+                _max_days = max(
+                    len(_ko_cur_y),
+                    *[len(s["y"]) for s in _similar]
+                )
+                # 현재 경로 기간만큼만 표시 (현재까지)
+                _show_days = len(_ko_cur_y)
+
+                for d in range(_show_days):
+                    row = {
+                        "경과일": d,
+                        "날짜(현재)": _cur_dates[d] if d < len(_cur_dates) else "",
+                        "현재 KOSPI(%)": round(_ko_cur_y[d], 2) if d < len(_ko_cur_y) else None,
+                    }
+                    for i, sim in enumerate(_similar):
+                        col_name = f"TOP{i+1} {sim['label']}(%)"
+                        row[col_name] = round(sim["y"][d], 2) if d < len(sim["y"]) else None
+                    _tbl_rows.append(row)
+
+                _tbl_df = pd.DataFrame(_tbl_rows)
+
+                # 스타일: 양수=초록, 음수=빨강
+                def _style_path_tbl(df):
+                    def _c(val):
+                        if not isinstance(val, float): return "color:#d1d5db"
+                        if val > 0:   return "color:#34d399;font-weight:600"
+                        if val < -10: return "color:#f87171;font-weight:700"
+                        if val < 0:   return "color:#fca5a5"
+                        return "color:#d1d5db"
+                    return df.style.map(_c)
+
+                st.dataframe(
+                    _style_path_tbl(_tbl_df),
+                    use_container_width=True,
+                    height=min(400, 36 + _show_days * 35),
+                )
+
+                # 현재 vs TOP3 괴리 요약
+                _dev_cols = st.columns(len(_similar))
+                for i, (sim, col) in enumerate(zip(_similar, _dev_cols)):
+                    _n = min(len(_ko_cur_y), len(sim["y"]))
+                    _cur_last = _ko_cur_y[-1]
+                    _sim_last = sim["y"][_n - 1]
+                    _gap = _cur_last - _sim_last
+                    _gap_clr = "#34d399" if _gap > 0 else "#f87171"
+                    with col:
+                        st.markdown(
+                            f'<div style="background:#111827;border:1px solid #1e2a3a;'
+                            f'border-radius:8px;padding:10px 14px;text-align:center;">'
+                            f'<div style="color:#6b7280;font-size:10px;">현재 vs TOP{i+1} {sim["label"]} 괴리</div>'
+                            f'<div style="color:{_gap_clr};font-size:20px;font-weight:700;">{_gap:+.1f}%p</div>'
+                            f'<div style="color:#4b5563;font-size:9px;">현재 {_cur_last:.1f}%  |  과거 {_sim_last:.1f}%</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
 
     with main_tab8:
         MEMO_FILE = pathlib.Path(__file__).parent / "memo.txt"
