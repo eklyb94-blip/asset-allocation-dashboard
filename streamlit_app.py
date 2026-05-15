@@ -426,9 +426,13 @@ def compute_strategy():
 
     # ── 월별 수익률 ──
     def mr(price):
+        if isinstance(price, pd.DataFrame):
+            price = price["Close"]
         return price.resample("ME").last().pct_change().dropna()
 
     def mr_bond(yield_pct):
+        if isinstance(yield_pct, pd.DataFrame):
+            yield_pct = yield_pct["Close"]
         m = yield_pct.resample("ME").last()
         return (-DURATION_US * m.diff() / 100).dropna()
 
