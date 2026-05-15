@@ -4130,7 +4130,7 @@ def main():
 
             # 2) 유사 TOP3 (컬러 굵은 선)
             for idx, sim in enumerate(_similar):
-                clr = _SIM_COLORS[idx]
+                _sim_clr = _SIM_COLORS[idx]
                 r1_txt  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'],float) and np.isnan(sim['r1'])) else "N/A"
                 r3_txt  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'],float) and np.isnan(sim['r3'])) else "N/A"
                 r12_txt = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'],float) and np.isnan(sim['r12'])) else "N/A"
@@ -4138,7 +4138,7 @@ def main():
                     x=sim["x"], y=sim["y"],
                     mode="lines",
                     name=f"TOP{idx+1} {sim['label']}",
-                    line=dict(color=clr, width=2.5),
+                    line=dict(color=_sim_clr, width=2.5),
                     opacity=0.9,
                     hovertemplate=(
                         f"<b>TOP{idx+1} {sim['label']}</b><br>"
@@ -4210,15 +4210,15 @@ def main():
                 st.caption(f"현재 경로 {_ko_cur_days}일과 과거 사이클 처음 {_ko_cur_days}일 비교 (MSE 기준)")
                 _sc1, _sc2, _sc3 = st.columns(3)
                 for idx, (col, sim) in enumerate(zip([_sc1,_sc2,_sc3], _similar)):
-                    clr = _SIM_COLORS[idx]
+                    _card_clr = _SIM_COLORS[idx]
                     r1  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'],float) and np.isnan(sim['r1'])) else "N/A"
                     r3  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'],float) and np.isnan(sim['r3'])) else "N/A"
                     r12 = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'],float) and np.isnan(sim['r12'])) else "N/A"
                     spd_txt = "빠른 하락" if sim["speed"] > 0.25 else "느린 하락"
                     with col:
                         st.markdown(
-                            f'<div style="background:#111827;border:1.5px solid {clr};border-radius:12px;padding:16px;">'
-                            f'<div style="color:{clr};font-size:12px;font-weight:700;margin-bottom:2px;">TOP{idx+1}  {sim["label"]}</div>'
+                            f'<div style="background:#111827;border:1.5px solid {_card_clr};border-radius:12px;padding:16px;">'
+                            f'<div style="color:{_card_clr};font-size:12px;font-weight:700;margin-bottom:2px;">TOP{idx+1}  {sim["label"]}</div>'
                             f'<div style="color:#6b7280;font-size:10px;margin-bottom:12px;">{spd_txt} · 낙폭 {sim["depth"]:.1f}% · {sim["dur"]}일</div>'
                             f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;">'
                             f'<div><div style="color:#4b5563;font-size:9px;">저점후 1M</div>'
