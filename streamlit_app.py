@@ -4054,7 +4054,7 @@ def main():
             # 고점 전후 경로 오버레이 + 유사 패턴 탐지 (고점 ±20일)
             # ════════════════════════════════════════════════════════
             st.markdown('<div class="section-title">📉 고점 전후 경로 비교 — 현재 위치 & 유사 패턴</div>', unsafe_allow_html=True)
-            st.caption("세로 점선 = 고점(0) 기준 · 음수 = 고점 이전 · 각 선 = 하나의 하락 사이클 · 빨간 굵은 선 = 현재 KOSPI · 고점 대비 -5% 이상 하락 시 활성화")
+            st.caption("0% = 고점 이전 20일 시작가 기준 · 세로 점선 = 고점 · 빨간 굵은 선 = 현재 KOSPI · 고점 대비 -5% 이상 하락 시 활성화")
 
             _PRE_DAYS = 20   # 고점 이전 표시 거래일
 
@@ -4071,7 +4071,9 @@ def main():
 
             _ko_combined  = pd.concat([_ko_pre_raw, _ko_post_raw])
             _ko_cur_x     = list(range(-_pre_len, len(_ko_post_raw)))
-            _ko_cur_y     = [(_ko_combined.iloc[i] / _ko_ath2 - 1) * 100 for i in range(len(_ko_combined))]
+            # ★ 정규화 기준: 고점이 아닌 윈도우 시작가 (20일 전) → 상승/하락 맥락 그대로 표시
+            _ko_base_start = float(_ko_combined.iloc[0])
+            _ko_cur_y     = [(_ko_combined.iloc[i] / _ko_base_start - 1) * 100 for i in range(len(_ko_combined))]
             _ko_cur_dict  = {_ko_cur_x[i]: _ko_cur_y[i] for i in range(len(_ko_cur_x))}
 
             # ── 과거 사이클 경로 (고점 이전 20일 + 이후 180일) ──
@@ -4087,7 +4089,8 @@ def main():
                 if len(_after) < 3:
                     continue
                 _seg   = pd.concat([_before, _after])
-                _base  = float(_after.iloc[0])    # 고점가격으로 정규화
+                # ★ 정규화 기준: 윈도우 시작가 (고점 이전 20일 첫날) = 0%
+                _base  = float(_seg.iloc[0])
                 _pre_n = len(_before)
                 _x_vals = list(range(-_pre_n, len(_after)))   # peak = 0
                 _y_vals = [float(_seg.iloc[i]) / _base * 100 - 100 for i in range(len(_seg))]
@@ -4139,7 +4142,7 @@ def main():
                     hovertemplate=(
                         f"<b>{hp['label']}</b><br>"
                         f"낙폭: {hp['depth']:.1f}%  기간: {hp['dur']}일<br>"
-                        f"고점 기준: %{{x}}일<br>고점대비: %{{y:.1f}}%<extra></extra>"
+                        f"고점 기준: %{{x}}일<br>20일전 대비: %{{y:.1f}}%<extra></extra>"
                     ),
                 ))
 
@@ -4159,7 +4162,7 @@ def main():
                         f"<b>TOP{idx+1} {sim['label']}</b><br>"
                         f"낙폭: {sim['depth']:.1f}%  기간: {sim['dur']}일<br>"
                         f"저점후 1M:{r1_txt}  3M:{r3_txt}  12M:{r12_txt}<br>"
-                        f"고점 기준: %{{x}}일<br>고점대비: %{{y:.1f}}%<extra></extra>"
+                        f"고점 기준: %{{x}}일<br>20일전 대비: %{{y:.1f}}%<extra></extra>"
                     ),
                 ))
 
@@ -4177,7 +4180,7 @@ def main():
                     mode="lines",
                     name="━ 평균",
                     line=dict(color="#4b5563", width=2, dash="dot"),
-                    hovertemplate="<b>평균</b><br>고점 기준: %{x}일<br>고점대비: %{y:.1f}%<extra></extra>",
+                    hovertemplate="<b>평균</b><br>고점 기준: %{x}일<br>20일전 대비: %{y:.1f}%<extra></extra>",
                 ))
 
             # 4) 현재 경로 (빨간 굵은 선)
@@ -4191,7 +4194,7 @@ def main():
                         size=5, color="#f87171",
                         symbol=["circle"] * (len(_ko_cur_x) - 1) + ["star"],
                     ),
-                    hovertemplate="<b>현재 KOSPI</b><br>고점 기준: %{x}일<br>고점대비: %{y:.1f}%<extra></extra>",
+                    hovertemplate="<b>현재 KOSPI</b><br>고점 기준: %{x}일<br>20일전 대비: %{y:.1f}%<extra></extra>",
                 ))
             else:
                 _fig_overlay.add_annotation(
@@ -4220,7 +4223,7 @@ def main():
                     zeroline=False,
                 ),
                 yaxis=dict(
-                    title=dict(text="고점 대비 수익률 (%)", font=dict(color="#6b7280", size=11)),
+                    title=dict(text="고점 이전 20일 시작가 대비 수익률 (%)", font=dict(color="#6b7280", size=11)),
                     showgrid=True, gridcolor="#1e2a3a",
                     ticksuffix="%", tickfont=dict(size=10, color="#9ca3af"),
                 ),
@@ -4268,7 +4271,7 @@ def main():
             # ── 유사 패턴 일별 데이터 테이블 ──
             if _ko_active and _similar:
                 st.markdown('<div class="section-title">📋 현재 vs 유사 패턴 일별 데이터</div>', unsafe_allow_html=True)
-                st.caption("고점 기준 거래일(음수=이전) · 고점대비 누적 수익률(%) · 현재 데이터는 실제 날짜 표시")
+                st.caption("고점 기준 거래일(음수=이전) · 고점 이전 20일 시작가 대비 누적 수익률(%) · 현재 데이터는 실제 날짜 표시")
 
                 # 현재 경로 날짜 리스트 (_ko_combined 기준)
                 _cur_dates = [str(_ko_combined.index[i].date()) for i in range(len(_ko_combined))]
