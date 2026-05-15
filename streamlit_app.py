@@ -4095,10 +4095,10 @@ def main():
 
             # ── 유사 패턴 탐지 (MSE 기반) ──
             _similar = []
-            if _ko_active and _ko_cur_days >= 3:
+            if _ko_active and _ko_cur_days >= 2:
                 for hp in _hist_paths:
                     n = min(_ko_cur_days, len(hp["y"]))
-                    if n < 3:
+                    if n < 2:
                         continue
                     mse = float(np.mean([(hp["y"][i] - _ko_cur_y[i])**2 for i in range(n)]))
                     _similar.append({"mse": mse, **hp})
