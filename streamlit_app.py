@@ -825,38 +825,6 @@ def main():
     season, sig_year, digit, season_start = current_season_info()
     season_kr     = "11월~4월 시즌" if season == "Nov-Apr" else "5월~10월 시즌"
 
-    # ── 현재 신호 상태 (전략7) ──
-    def _cur_sig_state(key):
-        """현재 전략7 매도 신호 상태: (sell_active, current_count)"""
-        try:
-            px = raw[key].copy()
-            px.index = pd.to_datetime(px.index).tz_localize(None)
-            dd_s  = (px - px.cummax()) / px.cummax() * 100
-            dlt   = px.diff()
-            gain  = dlt.clip(lower=0).rolling(14).mean()
-            loss  = (-dlt.clip(upper=0)).rolling(14).mean()
-            rsi_s = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
-            ma200 = px.rolling(200).mean()
-            ma_g  = (px - ma200) / ma200 * 100
-            ma20  = px.rolling(20).mean(); std20 = px.rolling(20).std()
-            bb_rng = (ma20 + 2*std20) - (ma20 - 2*std20)
-            bb_p  = (px - (ma20 - 2*std20)) / bb_rng.replace(0, np.nan) * 100
-            if key in ("kospi", "kosdaq", "csi300"):
-                s_vol = (px.pct_change().rolling(20).std() * (252**0.5) * 100 >= 35).astype(int)
-            else:
-                vix_h = load_vix_history()
-                vix_h.index = pd.to_datetime(vix_h.index).tz_localize(None)
-                s_vol = (vix_h.reindex(px.index, method="ffill").fillna(20) >= 40).astype(int)
-            sig = ((dd_s<=-30).astype(int)+(rsi_s<=30).astype(int)+
-                   (ma_g<=-15).astype(int)+(bb_p<=0).astype(int)+s_vol).fillna(0)
-            # 마지막 sell/normal 이벤트 비교로 현재 상태 결정
-            s_ge2 = sig[sig >= 2]; s_eq0 = sig[sig == 0]
-            last_sell = s_ge2.index[-1] if not s_ge2.empty else pd.Timestamp.min
-            last_norm = s_eq0.index[-1] if not s_eq0.empty else pd.Timestamp.min
-            return bool(last_sell > last_norm), int(sig.iloc[-1])
-        except Exception:
-            return False, 0
-
     # ── 현재 시즌 수익률 ──
     cur = {}
     for key in ["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"]:
@@ -864,14 +832,11 @@ def main():
         rg = season_return(raw["gold"], season_start)
         rb = season_return(raw["krbond"], season_start) if key in ("kospi", "kosdaq") \
              else season_return_bond(raw["us30y"], season_start)
-        inv  = digit in (strategies[key]["inv_na"] if season == "Nov-Apr"
-                         else strategies[key]["inv_mo"])
-        sell, sig_cnt = _cur_sig_state(key)
-        # 전략7 주식 비중
-        w7 = 0.0 if sell else (0.50 if inv else 0.25)
-        rp = (w7*rs + 0.25*rg + 0.25*rb) if all(v is not None for v in [rs, rg, rb]) else None
-        cur[key] = {"stock": rs, "gold": rg, "bond": rb, "port": rp,
-                    "invest": inv, "sell": sell, "sig_cnt": sig_cnt, "w7": w7}
+        inv = digit in (strategies[key]["inv_na"] if season == "Nov-Apr"
+                        else strategies[key]["inv_mo"])
+        w6 = 0.50 if inv else 0.25
+        rp = (w6*rs + 0.25*rg + 0.25*rb) if all(v is not None for v in [rs, rg, rb]) else None
+        cur[key] = {"stock": rs, "gold": rg, "bond": rb, "port": rp, "invest": inv, "w6": w6}
 
     meta = {
         "sp500":  {"name": "S&P500", "emoji": "🇺🇸", "bond": "미국채10년", "color": "#5b9bd5"},
@@ -929,27 +894,19 @@ def main():
             )
 
         # ── 2. 현재 권장 자산배분 카드 ──
-        st.markdown('<div class="section-title">🎯 현재 권장 자산배분 (전략7)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🎯 현재 권장 자산배분 (전략6)</div>', unsafe_allow_html=True)
 
         cols5 = st.columns(6)
         for key, col in zip(["sp500", "nasdaq", "kospi", "dow", "kosdaq", "csi300"], cols5):
             with col:
                 m       = meta[key]
                 inv     = cur[key]["invest"]
-                sell    = cur[key]["sell"]
-                sig_cnt = cur[key]["sig_cnt"]
-                w7      = cur[key]["w7"]
+                w6      = cur[key]["w6"]
                 rp      = cur[key]["port"]
-                stk_pct = int(w7 * 100)
+                stk_pct = int(w6 * 100)
 
                 # 상태별 스타일
-                if sell:
-                    card_bg     = "linear-gradient(160deg,#1f0808 0%,#120404 100%)"
-                    card_border = "#dc2626"
-                    icon        = "🔴"
-                    status      = f"매도 신호 ({sig_cnt}/5)"
-                    sc          = "#f87171"
-                elif inv:
+                if inv:
                     card_bg     = "linear-gradient(160deg,#0d2b1a 0%,#071a10 100%)"
                     card_border = "#16a34a"
                     icon        = "✅"
@@ -963,22 +920,15 @@ def main():
                     sc          = "#fb923c"
 
                 # 비중 뱃지
-                stk_bg  = "#7f1d1d" if sell else ("#065f46" if inv else "#374151")
-                stk_clr = "#fca5a5" if sell else ("#34d399" if inv else "#9ca3af")
+                stk_bg  = "#065f46" if inv else "#374151"
+                stk_clr = "#34d399" if inv else "#9ca3af"
                 badge_stk  = f'<span style="background:{stk_bg};color:{stk_clr};border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">주식&nbsp;{stk_pct}%</span>'
-                cash_pct   = 100 - stk_pct - 50  # 금25+채권25=50
+                cash_pct   = 100 - stk_pct - 50
                 badge_cash = f'<span style="background:#374151;color:#9ca3af;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">현금&nbsp;{cash_pct}%</span>' \
                              if cash_pct > 0 else ''
                 badge_gold = f'<span style="background:#78350f;color:#fbbf24;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">금&nbsp;25%</span>'
                 badge_bond = f'<span style="background:#1e3a5f;color:#93c5fd;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">{m["bond"]}&nbsp;25%</span>'
                 badges     = f'{badge_stk} {badge_cash} {badge_gold} {badge_bond}'
-
-                # 매도 신호 시 신호 상세 표시
-                sell_note = (
-                    f'<div style="color:#f87171;font-size:10px;margin-bottom:10px;'
-                    f'background:#2d0a0a;border-radius:6px;padding:5px 8px;">'
-                    f'⚡ 전략7 매도 신호 활성 — 주식 비중 0%</div>'
-                ) if sell else ''
 
                 port_color = clr(rp)
                 port_val   = fp(rp)
@@ -989,7 +939,6 @@ def main():
                     f'<div style="color:#f1f5f9;font-size:24px;font-weight:800;margin-top:2px;">주식 {stk_pct}%</div></div>'
                     f'<div style="text-align:right;"><div style="color:{sc};font-size:13px;font-weight:700;">{icon} {status}</div>'
                     f'<div style="color:#6b7280;font-size:11px;margin-top:2px;">끝자리 {digit}</div></div></div>'
-                    f'{sell_note}'
                     f'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px;">{badges}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
@@ -1005,10 +954,10 @@ def main():
                 ("주식",           cur[key]["stock"]),
                 ("금",             cur[key]["gold"]),
                 (m["bond"],        cur[key]["bond"]),
-                ("포트폴리오(전략7)", cur[key]["port"]),
+                ("포트폴리오(전략6)", cur[key]["port"]),
             ]
             for col, (label, val) in zip([c1, c2, c3, c4], items):
-                is_port = label == "포트폴리오(전략7)"
+                is_port = label == "포트폴리오(전략6)"
                 with col:
                     bc  = "#1e3a2a" if is_port else "#1e2a3a"
                     vc  = clr(val)
@@ -1066,9 +1015,7 @@ def main():
         _applied_fee = st.session_state.applied_fee
 
         def _daily_pf_series(key, fee_pct=0.0):
-            """일별 포트폴리오 가치 시리즈 반환 — 전략6/전략7/BH/주식단독
-            fee_pct: 왕복 수수료(%) — 매도/매수 각 leg마다 fee_pct/2 차감
-            """
+            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독"""
             sim = sims.get(key, pd.DataFrame())
             if sim.empty:
                 return {}
@@ -1083,53 +1030,20 @@ def main():
             for s in [d_stk, d_gold, d_bond]:
                 s.index = pd.to_datetime(s.index).tz_localize(None)
 
-            # ── 전략7용 신호 계산 ──
-            px = raw[key].copy()
-            px.index = pd.to_datetime(px.index).tz_localize(None)
-
-            dd_s   = (px - px.cummax()) / px.cummax() * 100
-            dlt    = px.diff()
-            gain   = dlt.clip(lower=0).rolling(14).mean()
-            loss   = (-dlt.clip(upper=0)).rolling(14).mean()
-            rsi_s  = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
-            ma200  = px.rolling(200).mean()
-            ma_g   = (px - ma200) / ma200 * 100
-            ma20   = px.rolling(20).mean()
-            std20  = px.rolling(20).std()
-            bb_rng = (ma20 + 2*std20) - (ma20 - 2*std20)
-            bb_p   = (px - (ma20 - 2*std20)) / bb_rng.replace(0, np.nan) * 100
-
-            if key in ("kospi", "kosdaq", "csi300"):
-                s_vol = (px.pct_change().rolling(20).std() * (252**0.5) * 100 >= 35).astype(int)
-            else:
-                vix_h = load_vix_history()
-                vix_h.index = pd.to_datetime(vix_h.index).tz_localize(None)
-                vix_r = vix_h.reindex(px.index, method="ffill").fillna(20)
-                s_vol = (vix_r >= 40).astype(int)
-
-            sig = ((dd_s <= -30).astype(int) + (rsi_s <= 30).astype(int) +
-                   (ma_g  <= -15).astype(int) + (bb_p  <=   0).astype(int) +
-                   s_vol).fillna(0)
-            sig_dict = sig.to_dict()
-
             # 시즌별 투자 여부 맵
             invest_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in sim.iterrows()}
 
-            cols  = ["전략6", "전략7", "BH_max", "BH_min", "주식단독"]
+            cols  = ["전략6", "BH_max", "BH_min", "주식단독"]
             vals  = {c: [] for c in cols}
             v     = {c: 100.0 for c in cols}
             dates = []
             gold_idx = set(d_gold.index)
             bond_idx = set(d_bond.index)
-            s7_sell  = False  # 전략7 매도 상태
-            fee_leg  = fee_pct / 100 / 2   # 매 leg(매도 or 매수)당 비용
 
             # ── BH_max / BH_min 자산별 개별 추적 (6개월 리밸런싱용) ──
-            # BH_max : 주식50 / 금25 / 채권25 / 현금0
-            # BH_min : 주식25 / 금25 / 채권25 / 현금25
-            bm_stk, bm_gld, bm_bnd          = 50.0, 25.0, 25.0        # BH_max 컴포넌트
-            bl_stk, bl_gld, bl_bnd, bl_csh  = 25.0, 25.0, 25.0, 25.0  # BH_min 컴포넌트
-            prev_season_key = None  # 시즌 전환 감지용
+            bm_stk, bm_gld, bm_bnd          = 50.0, 25.0, 25.0
+            bl_stk, bl_gld, bl_bnd, bl_csh  = 25.0, 25.0, 25.0, 25.0
+            prev_season_key = None
 
             for dt in d_stk.index:
                 mo = dt.month
@@ -1143,36 +1057,20 @@ def main():
                 rg = float(d_gold[dt]) if dt in gold_idx else 0.0
                 rb = float(d_bond[dt]) if dt in bond_idx else 0.0
 
-                # ── 시즌 전환 시 BH 리밸런싱 ──
+                # 시즌 전환 시 BH 리밸런싱
                 if season_key != prev_season_key and prev_season_key is not None:
-                    # BH_max → 50:25:25 복원
                     tot_max = bm_stk + bm_gld + bm_bnd
                     bm_stk, bm_gld, bm_bnd = tot_max*0.50, tot_max*0.25, tot_max*0.25
-                    # BH_min → 25:25:25:25 복원
                     tot_min = bl_stk + bl_gld + bl_bnd + bl_csh
                     bl_stk = bl_gld = bl_bnd = bl_csh = tot_min * 0.25
                 prev_season_key = season_key
 
-                # 전략7 매도 상태 갱신 + 수수료 차감
-                s = float(sig_dict.get(dt, 0))
-                prev_sell = s7_sell
-                if   s >= 2: s7_sell = True
-                elif s == 0: s7_sell = False
-                if s7_sell != prev_sell:
-                    v["전략7"] *= (1 - fee_leg)
-
                 w6 = 0.50 if invest else 0.25
-                w7 = 0.0  if s7_sell else w6
-
-                # 전략6/7: 기존 방식 (시즌 시작 시 비중 결정 후 일별 적용)
-                v["전략6"]   *= (1 + w6*rs  + 0.25*rg + 0.25*rb)
-                v["전략7"]   *= (1 + w7*rs  + 0.25*rg + 0.25*rb)
+                v["전략6"]   *= (1 + w6*rs + 0.25*rg + 0.25*rb)
                 v["주식단독"] *= (1 + rs)
 
-                # BH_max / BH_min: 자산별 성장 후 합산
                 bm_stk *= (1 + rs); bm_gld *= (1 + rg); bm_bnd *= (1 + rb)
                 bl_stk *= (1 + rs); bl_gld *= (1 + rg); bl_bnd *= (1 + rb)
-                # bl_csh: 무이자 현금 → 변화 없음
                 v["BH_max"] = bm_stk + bm_gld + bm_bnd
                 v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
 
@@ -1325,14 +1223,13 @@ def main():
                 st.warning("데이터 없음")
                 return
 
-            s7_cum, s7_cagr, s7_mdd = _stats(pf["전략7"])
             s6_cum, s6_cagr, s6_mdd = _stats(pf["전략6"])
             b5_cum, b5_cagr, b5_mdd = _stats(pf["BH_max"])
             b2_cum, b2_cagr, b2_mdd = _stats(pf["BH_min"])
             sk_cum, sk_cagr, sk_mdd = _stats(pf["주식단독"])
 
-            y0 = pf["전략7"].index[0].year
-            y1 = pf["전략7"].index[-1].year
+            y0 = pf["전략6"].index[0].year
+            y1 = pf["전략6"].index[-1].year
 
             # ── 수수료 배지 ──
             fee_badge = (
@@ -1341,25 +1238,22 @@ def main():
                 f"수수료 {fee_pct:.2f}% 반영</span>"
                 if fee_pct > 0 else ""
             )
-            # ── 전략7 히어로 카드 ──
-            hero = _card_html(f"⚡ 전략7  (전략6 + 매도신호≥2 시 주식0%){fee_badge}",
-                               "#0d0f1a", "#a78bfa", s7_cum, s7_cagr, s7_mdd, large=True)
-            # ── 비교 카드 4개 ──
+            # ── 전략6 히어로 카드 ──
+            hero = _card_html(f"⚙️ 전략6{fee_badge}",
+                               "#071a10", "#16a34a", s6_cum, s6_cagr, s6_mdd, large=True)
+            # ── 비교 카드 3개 ──
             cmp = (
-                _card_html("⚙️ 전략6",      "#071a10", "#16a34a", s6_cum, s6_cagr, s6_mdd)
-              + _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", b5_cum, b5_cagr, b5_mdd)
-              + _card_html("📊 주식25% BH", "#111827", "#6b7280", b2_cum, b2_cagr, b2_mdd)
-              + _card_html("💹 주식단독",   "#1a1305", "#f59e0b", sk_cum, sk_cagr, sk_mdd)
+                  _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", b5_cum, b5_cagr, b5_mdd)
+                + _card_html("📊 주식25% BH", "#111827", "#6b7280", b2_cum, b2_cagr, b2_mdd)
+                + _card_html("💹 주식단독",   "#1a1305", "#f59e0b", sk_cum, sk_cagr, sk_mdd)
             )
             st.markdown(
                 f'<div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;margin-bottom:4px;">'
                 f'  {hero}'
-                f'  <div style="display:grid;grid-template-columns:repeat(2,1fr);'
-                f'       grid-template-rows:repeat(2,1fr);gap:10px;">{cmp}</div>'
+                f'  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">{cmp}</div>'
                 f'</div>'
                 f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
-                f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준 · '
-                f'전략7 조건: 5개 신호 중 2개 이상 동시 점등 시 주식 0%, 신호 0개 시 전략6으로 복귀</div>',
+                f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준</div>',
                 unsafe_allow_html=True,
             )
 
@@ -1367,8 +1261,7 @@ def main():
             fee_title = f"  (수수료 {fee_pct:.2f}% 반영)" if fee_pct > 0 else ""
             fig_c = go.Figure()
             chart_cfg = [
-                ("전략7",    "⚡ 전략7",       "#a78bfa", 2.5),
-                ("전략6",    "⚙️ 전략6",       "#34d399", 1.5),
+                ("전략6",    "⚙️ 전략6",       "#34d399", 2.5),
                 ("BH_max",  "📈 주식50%BH",   "#6366f1", 1.0),
                 ("BH_min",  "📊 주식25%BH",   "#6b7280", 1.0),
                 ("주식단독", "💹 주식단독BH",   "#fbbf24", 1.0),
