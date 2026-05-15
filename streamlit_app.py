@@ -850,7 +850,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "📝 메모장"])
+    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -4042,90 +4042,6 @@ def main():
                         )
 
 
-    with main_tab8:
-        MEMO_FILE = pathlib.Path(__file__).parent / "memo.txt"
-
-        _DEFAULT_MEMO = """\
-## 📌 현재 전략 요약
-- 끝자리 전략: 수익 확률 60% 이상인 끝자리 해만 투자
-- 투자 비중(투자시즌): 주식 50% / 금 25% / 채권 25%
-- 투자 비중(현금보유): 주식 25% / 현금 25% / 금 25% / 채권 25%
-
-## 📋 저점 레이더 기준값
-| 지표 | 저점 기준 |
-|------|----------|
-| VIX | 40 이상 |
-| Fear & Greed | 25 이하 |
-| CAPE | 15 이하 |
-| S&P500 PER | 15 이하 |
-| ATH 대비 낙폭 | -30% 이하 |
-| RSI(14) | 30 이하 |
-| 200일 MA 괴리율 | -20% 이하 |
-| 볼린저밴드 %B | 0 이하 |
-| 실현변동성 | 35% 이상 |
-| KOSPI PBR | 1.0 이하 |
-
-## 🗒️ 나의 투자 메모
-(여기에 자유롭게 작성하세요)
-
-## 📅 매매 히스토리
-| 날짜 | 지수 | 매수/매도 | 금액 | 비고 |
-|------|------|---------|------|------|
-|      |      |         |      |      |
-
-## 💡 관찰 중 / 대기 중
-
-
-## 🔖 참고 링크
-- CNN Fear & Greed: https://money.cnn.com/data/fear-and-greed/
-- multpl CAPE: https://www.multpl.com/shiller-pe
-- multpl PER: https://www.multpl.com/s-p-500-pe-ratio
-"""
-
-        def _load_memo():
-            try:
-                if MEMO_FILE.exists():
-                    return MEMO_FILE.read_text(encoding="utf-8")
-            except Exception:
-                pass
-            return _DEFAULT_MEMO
-
-        def _save_memo(text):
-            try:
-                MEMO_FILE.write_text(text, encoding="utf-8")
-                return True
-            except Exception:
-                return False
-
-        # 세션 내 최초 1회만 파일에서 로드
-        if "memo_init" not in st.session_state:
-            st.session_state["memo_init"] = _load_memo()
-
-        st.markdown('<div class="section-title">📝 메모장</div>', unsafe_allow_html=True)
-        st.caption("저장 버튼을 누르면 로컬 파일(memo.txt)에 저장됩니다. 새로고침 후에도 유지됩니다.")
-
-        memo_text = st.text_area(
-            label="memo",
-            value=st.session_state["memo_init"],
-            height=600,
-            label_visibility="collapsed",
-            key="memo_textarea",
-        )
-
-        c1, c2, c3 = st.columns([1, 1, 8])
-        with c1:
-            if st.button("💾 저장", use_container_width=True):
-                if _save_memo(memo_text):
-                    st.session_state["memo_init"] = memo_text
-                    st.success("✅ 저장됐습니다!")
-                else:
-                    st.warning("⚠️ 저장 실패 (파일 쓰기 권한 확인)")
-        with c2:
-            if st.button("↺ 초기화", use_container_width=True):
-                st.session_state["memo_init"] = _DEFAULT_MEMO
-                if "memo_textarea" in st.session_state:
-                    del st.session_state["memo_textarea"]
-                st.rerun()
 
 
     # ════════════════════════════════════════
