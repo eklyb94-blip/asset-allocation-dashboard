@@ -820,6 +820,8 @@ def main():
     with st.spinner("📡 데이터 로딩 중... (최초 1회 약 10~20초)"):
         raw, monthly, seas, strategies, sims = compute_strategy()
         ohlc = load_daily_ohlc()
+    if "_data_loaded_at" not in st.session_state:
+        st.session_state["_data_loaded_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
 
     today         = date.today()
     season, sig_year, digit, season_start = current_season_info()
@@ -850,21 +852,18 @@ def main():
     # ════════════════════════════════════════
     # ── 데이터 갱신 정보 ──
     try:
-        _last_dates = {k: raw[k].index[-1] for k in ["sp500", "kospi", "nasdaq"] if k in raw and len(raw[k]) > 0}
-        _sp_date   = _last_dates.get("sp500",  pd.Timestamp("1970-01-01")).strftime("%Y-%m-%d")
-        _ko_date   = _last_dates.get("kospi",  pd.Timestamp("1970-01-01")).strftime("%Y-%m-%d")
-        _nq_date   = _last_dates.get("nasdaq", pd.Timestamp("1970-01-01")).strftime("%Y-%m-%d")
-        _render_ts = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+        _sp_date   = raw["sp500"].index[-1].strftime("%Y-%m-%d") if "sp500" in raw and len(raw["sp500"]) > 0 else "N/A"
+        _ko_date   = raw["kospi"].index[-1].strftime("%Y-%m-%d") if "kospi" in raw and len(raw["kospi"]) > 0 else "N/A"
+        _loaded_at = st.session_state.get("_data_loaded_at", "N/A")
         st.markdown(
-            f'<div style="display:flex;justify-content:flex-end;align-items:center;'
+            f'<div style="display:flex;justify-content:flex-start;align-items:center;'
             f'gap:20px;padding:2px 2px 10px;flex-wrap:wrap;">'
-            f'<span style="color:#4b5563;font-size:11px;">📅 데이터 기준일 &nbsp;'
-            f'SP500 <b style="color:#9ca3af;">{_sp_date}</b> &nbsp;·&nbsp; '
-            f'KOSPI <b style="color:#9ca3af;">{_ko_date}</b> &nbsp;·&nbsp; '
-            f'NASDAQ <b style="color:#9ca3af;">{_nq_date}</b></span>'
-            f'<span style="color:#4b5563;font-size:11px;">'
-            f'🕐 렌더링 <b style="color:#6b7280;">{_render_ts}</b>'
-            f'<span style="color:#374151;"> &nbsp;(1시간마다 자동갱신)</span></span>'
+            f'<span style="font-size:12px;color:#fbbf24;">📅 데이터 기준일 &nbsp;'
+            f'SP500 <b style="color:#f1f5f9;">{_sp_date}</b> &nbsp;·&nbsp; '
+            f'KOSPI <b style="color:#f1f5f9;">{_ko_date}</b></span>'
+            f'<span style="font-size:12px;color:#fbbf24;">'
+            f'🕐 로드 시각 <b style="color:#f1f5f9;">{_loaded_at}</b>'
+            f'<span style="color:#fb923c;"> &nbsp;(1시간마다 자동갱신)</span></span>'
             f'</div>',
             unsafe_allow_html=True,
         )
