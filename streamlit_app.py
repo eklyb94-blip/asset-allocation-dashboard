@@ -848,6 +848,30 @@ def main():
     }
 
     # ════════════════════════════════════════
+    # ── 데이터 갱신 정보 ──
+    try:
+        _last_dates = {k: raw[k].index[-1] for k in ["sp500", "kospi", "nasdaq"] if k in raw and len(raw[k]) > 0}
+        _sp_date   = _last_dates.get("sp500",  pd.Timestamp("1970-01-01")).strftime("%Y-%m-%d")
+        _ko_date   = _last_dates.get("kospi",  pd.Timestamp("1970-01-01")).strftime("%Y-%m-%d")
+        _nq_date   = _last_dates.get("nasdaq", pd.Timestamp("1970-01-01")).strftime("%Y-%m-%d")
+        _render_ts = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+        st.markdown(
+            f'<div style="display:flex;justify-content:flex-end;align-items:center;'
+            f'gap:20px;padding:2px 2px 10px;flex-wrap:wrap;">'
+            f'<span style="color:#4b5563;font-size:11px;">📅 데이터 기준일 &nbsp;'
+            f'SP500 <b style="color:#9ca3af;">{_sp_date}</b> &nbsp;·&nbsp; '
+            f'KOSPI <b style="color:#9ca3af;">{_ko_date}</b> &nbsp;·&nbsp; '
+            f'NASDAQ <b style="color:#9ca3af;">{_nq_date}</b></span>'
+            f'<span style="color:#4b5563;font-size:11px;">'
+            f'🕐 렌더링 <b style="color:#6b7280;">{_render_ts}</b>'
+            f'<span style="color:#374151;"> &nbsp;(1시간마다 자동갱신)</span></span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
+    # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
     main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴"])
