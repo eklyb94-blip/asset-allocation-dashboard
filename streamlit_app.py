@@ -4050,6 +4050,192 @@ def main():
                 unsafe_allow_html=True,
             )
 
+            # ════════════════════════════════════════════════════════
+            # 고점 기준 경로 오버레이 + 유사 패턴 탐지
+            # ════════════════════════════════════════════════════════
+            st.markdown('<div class="section-title">📉 고점 이후 경로 비교 — 현재 위치 & 유사 패턴</div>', unsafe_allow_html=True)
+            st.caption("고점 = 0% 기준 · 각 선 = 하나의 하락 사이클 · 빨간 굵은 선 = 현재 KOSPI · 고점 대비 -5% 이상 하락 시 활성화")
+
+            # ── 현재 KOSPI 경로 추출 ──
+            _ko_ath2      = float(_ko_raw.cummax().iloc[-1])
+            _ko_ath_dt2   = _ko_raw[_ko_raw == _ko_ath2].index[-1]
+            _ko_now_dd    = (_ko_raw.iloc[-1] / _ko_ath2 - 1) * 100
+            _ko_active    = _ko_now_dd <= -5.0   # -5% 이상 하락 시 활성화
+
+            # 현재 경로 (고점 이후 오늘까지)
+            _ko_cur_path  = _ko_raw[_ko_raw.index >= _ko_ath_dt2]
+            _ko_cur_x     = list(range(len(_ko_cur_path)))
+            _ko_cur_y     = [(_ko_cur_path.iloc[i] / _ko_ath2 - 1) * 100 for i in range(len(_ko_cur_path))]
+            _ko_cur_days  = len(_ko_cur_path)  # 현재 경과 거래일 수
+
+            # ── 과거 사이클 경로 추출 (고점 기준) ──
+            _hist_paths = []   # {label, x, y, depth, dur, r1, r3, r12}
+            for _, row in ko_cyc.iterrows():
+                peak_dt   = pd.Timestamp(row["고점일"])
+                trough_dt = pd.Timestamp(row["저점일"])
+                # 고점부터 저점 이후 120일까지
+                _end_dt = trough_dt + pd.Timedelta(days=180)
+                _seg    = _ko_raw[(_ko_raw.index >= peak_dt) & (_ko_raw.index <= _end_dt)]
+                if len(_seg) < 5:
+                    continue
+                _base   = float(_seg.iloc[0])
+                _y_vals = [float(_seg.iloc[i]) / _base * 100 - 100 for i in range(len(_seg))]
+                _x_vals = list(range(len(_y_vals)))
+                _hist_paths.append({
+                    "label": str(row["고점일"])[:7],
+                    "x":     _x_vals,
+                    "y":     _y_vals,
+                    "depth": row["최대낙폭(%)"],
+                    "dur":   row["기간(일)"],
+                    "speed": row["낙폭속도(%/일)"],
+                    "r1":    row["1M(%)"],
+                    "r3":    row["3M(%)"],
+                    "r12":   row["12M(%)"],
+                })
+
+            # ── 유사 패턴 탐지 (MSE 기반) ──
+            _similar = []
+            if _ko_active and _ko_cur_days >= 3:
+                for hp in _hist_paths:
+                    n = min(_ko_cur_days, len(hp["y"]))
+                    if n < 3:
+                        continue
+                    mse = float(np.mean([(hp["y"][i] - _ko_cur_y[i])**2 for i in range(n)]))
+                    _similar.append({"mse": mse, **hp})
+                _similar.sort(key=lambda x: x["mse"])
+                _similar = _similar[:3]   # TOP 3
+
+            # ── 차트 그리기 ──
+            _SIM_COLORS = ["#f59e0b", "#34d399", "#a78bfa"]   # TOP3 색상
+
+            _fig_overlay = go.Figure()
+
+            # 1) 과거 사이클 (회색 반투명)
+            _sim_labels = {s["label"] for s in _similar}
+            for hp in _hist_paths:
+                if hp["label"] in _sim_labels:
+                    continue   # TOP3는 나중에 별도로 그림
+                _fig_overlay.add_trace(go.Scatter(
+                    x=hp["x"], y=hp["y"],
+                    mode="lines",
+                    line=dict(color="#374151", width=1),
+                    opacity=0.45,
+                    showlegend=False,
+                    hovertemplate=(
+                        f"<b>{hp['label']}</b><br>"
+                        f"낙폭: {hp['depth']:.1f}%  기간: {hp['dur']}일<br>"
+                        f"경과일: %{{x}}<br>고점대비: %{{y:.1f}}%<extra></extra>"
+                    ),
+                ))
+
+            # 2) 유사 TOP3 (컬러 굵은 선)
+            for idx, sim in enumerate(_similar):
+                clr = _SIM_COLORS[idx]
+                r1_txt  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'],float) and np.isnan(sim['r1'])) else "N/A"
+                r3_txt  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'],float) and np.isnan(sim['r3'])) else "N/A"
+                r12_txt = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'],float) and np.isnan(sim['r12'])) else "N/A"
+                _fig_overlay.add_trace(go.Scatter(
+                    x=sim["x"], y=sim["y"],
+                    mode="lines",
+                    name=f"TOP{idx+1} {sim['label']}",
+                    line=dict(color=clr, width=2.5),
+                    opacity=0.9,
+                    hovertemplate=(
+                        f"<b>TOP{idx+1} {sim['label']}</b><br>"
+                        f"낙폭: {sim['depth']:.1f}%  기간: {sim['dur']}일<br>"
+                        f"저점후 1M:{r1_txt}  3M:{r3_txt}  12M:{r12_txt}<br>"
+                        f"경과일: %{{x}}<br>고점대비: %{{y:.1f}}%<extra></extra>"
+                    ),
+                ))
+
+            # 3) 평균선
+            if _hist_paths:
+                _max_len = max(len(hp["y"]) for hp in _hist_paths)
+                _avg_y   = [
+                    np.mean([hp["y"][i] for hp in _hist_paths if i < len(hp["y"])])
+                    for i in range(_max_len)
+                ]
+                _fig_overlay.add_trace(go.Scatter(
+                    x=list(range(_max_len)), y=_avg_y,
+                    mode="lines",
+                    name="━ 평균",
+                    line=dict(color="#4b5563", width=2, dash="dot"),
+                    hovertemplate="<b>평균</b><br>경과일: %{x}<br>고점대비: %{y:.1f}%<extra></extra>",
+                ))
+
+            # 4) 현재 경로 (빨간 굵은 선)
+            if _ko_active:
+                _fig_overlay.add_trace(go.Scatter(
+                    x=_ko_cur_x, y=_ko_cur_y,
+                    mode="lines+markers",
+                    name="▶ 현재 KOSPI",
+                    line=dict(color="#f87171", width=3.5),
+                    marker=dict(size=5, color="#f87171",
+                                symbol=["circle"]*(_ko_cur_days-1)+["star"]),
+                    hovertemplate="<b>현재 KOSPI</b><br>경과일: %{x}<br>고점대비: %{y:.1f}%<extra></extra>",
+                ))
+            else:
+                _fig_overlay.add_annotation(
+                    x=0.5, y=0.5, xref="paper", yref="paper",
+                    text="현재 KOSPI 고점 대비 -5% 미만<br>하락폭이 -5% 이상이면 현재 경로가 표시됩니다",
+                    font=dict(color="#6b7280", size=13),
+                    showarrow=False,
+                    bgcolor="#111827", bordercolor="#374151", borderpad=10,
+                )
+
+            # 0% 기준선
+            _fig_overlay.add_hline(y=0, line_dash="dash", line_color="#374151", line_width=1)
+
+            _fig_overlay.update_layout(
+                template="plotly_dark", paper_bgcolor="#0a0e1a", plot_bgcolor="#111827",
+                height=520, margin=dict(l=0, r=0, t=10, b=0),
+                xaxis=dict(
+                    title=dict(text="고점 이후 경과 거래일", font=dict(color="#6b7280", size=11)),
+                    showgrid=True, gridcolor="#1e2a3a",
+                    tickfont=dict(size=10, color="#9ca3af"),
+                ),
+                yaxis=dict(
+                    title=dict(text="고점 대비 수익률 (%)", font=dict(color="#6b7280", size=11)),
+                    showgrid=True, gridcolor="#1e2a3a",
+                    ticksuffix="%", tickfont=dict(size=10, color="#9ca3af"),
+                ),
+                legend=dict(orientation="h", y=1.04, x=0, font=dict(size=11, color="#d1d5db")),
+                hovermode="x unified",
+            )
+            st.plotly_chart(_fig_overlay, use_container_width=True)
+
+            # ── 유사 패턴 카드 ──
+            if _ko_active and _similar:
+                st.markdown('<div class="section-title">🔍 가장 유사한 과거 패턴 TOP 3</div>', unsafe_allow_html=True)
+                st.caption(f"현재 경로 {_ko_cur_days}일과 과거 사이클 처음 {_ko_cur_days}일 비교 (MSE 기준)")
+                _sc1, _sc2, _sc3 = st.columns(3)
+                for idx, (col, sim) in enumerate(zip([_sc1,_sc2,_sc3], _similar)):
+                    clr = _SIM_COLORS[idx]
+                    r1  = f"{sim['r1']:+.1f}%" if sim['r1'] is not None and not (isinstance(sim['r1'],float) and np.isnan(sim['r1'])) else "N/A"
+                    r3  = f"{sim['r3']:+.1f}%" if sim['r3'] is not None and not (isinstance(sim['r3'],float) and np.isnan(sim['r3'])) else "N/A"
+                    r12 = f"{sim['r12']:+.1f}%" if sim['r12'] is not None and not (isinstance(sim['r12'],float) and np.isnan(sim['r12'])) else "N/A"
+                    spd_txt = "빠른 하락" if sim["speed"] > 0.25 else "느린 하락"
+                    with col:
+                        st.markdown(
+                            f'<div style="background:#111827;border:1.5px solid {clr};border-radius:12px;padding:16px;">'
+                            f'<div style="color:{clr};font-size:12px;font-weight:700;margin-bottom:2px;">TOP{idx+1}  {sim["label"]}</div>'
+                            f'<div style="color:#6b7280;font-size:10px;margin-bottom:12px;">{spd_txt} · 낙폭 {sim["depth"]:.1f}% · {sim["dur"]}일</div>'
+                            f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;">'
+                            f'<div><div style="color:#4b5563;font-size:9px;">저점후 1M</div>'
+                            f'<div style="color:#34d399;font-size:16px;font-weight:700;">{r1}</div></div>'
+                            f'<div><div style="color:#4b5563;font-size:9px;">저점후 3M</div>'
+                            f'<div style="color:#34d399;font-size:16px;font-weight:700;">{r3}</div></div>'
+                            f'<div><div style="color:#4b5563;font-size:9px;">저점후 12M</div>'
+                            f'<div style="color:#34d399;font-size:16px;font-weight:700;">{r12}</div></div>'
+                            f'</div>'
+                            f'<div style="margin-top:10px;border-top:1px solid #1e2a3a;padding-top:8px;'
+                            f'color:#6b7280;font-size:10px;">유사도 점수 (낮을수록 유사): {sim["mse"]:.2f}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+            elif not _ko_active:
+                st.info("KOSPI가 고점 대비 -5% 이상 하락하면 유사 패턴 TOP 3가 자동으로 표시됩니다.")
+
 
     with main_tab8:
         MEMO_FILE = pathlib.Path(__file__).parent / "memo.txt"
