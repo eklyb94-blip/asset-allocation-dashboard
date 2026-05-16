@@ -288,6 +288,23 @@ def load_fear_greed():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_sp500tr():
+    """S&P500 Total Return Index (^SP500TR) — 배당 재투자 포함, 1988~"""
+    try:
+        df = yf.download("^SP500TR", start="1970-01-01", auto_adjust=True,
+                         progress=False, multi_level_index=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        if "Close" not in df.columns or df.empty:
+            return pd.Series(dtype=float)
+        s = df["Close"].dropna()
+        s.index = pd.to_datetime(s.index).tz_localize(None)
+        return s.sort_index()
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_multpl(url):
     if not _REQUESTS_OK:
         return None
@@ -5100,36 +5117,69 @@ def main():
     # TAB 8: 🧪 테스트모드
     # ════════════════════════════════════════════════════════
     with main_tab8:
-        st.markdown('<div class="section-title">🧪 테스트모드 — 전략 비교 (S&P500 1970~)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🧪 테스트모드 — 전략 비교 (S&P500 1970~ | 배당·쿠폰 포함)</div>', unsafe_allow_html=True)
 
         # ── 데이터 준비 ──
+        # ▶ S&P500 가격 (^GSPC, 1970~): 투자시즌 판단 + 트레일링 스탑용 기준 가격
         _d_sp = raw["sp500"].copy()
         _d_sp.index = pd.to_datetime(_d_sp.index).tz_localize(None)
         _d_sp = _d_sp.dropna().sort_index()
 
+        # ▶ S&P500 Total Return (^SP500TR, 1988~): 배당 재투자 포함 수익률
+        #   1988년 이전 구간은 ^GSPC 수익률(배당 미포함)로 대체
+        _d_sp_tr = load_sp500tr()
+        _rs_gspc = _d_sp.pct_change().dropna()
+        if not _d_sp_tr.empty:
+            _rs_tr   = _d_sp_tr.pct_change().dropna()
+            _rs_base = _rs_gspc.copy()
+            _tr_idx  = _rs_tr.index.intersection(_rs_gspc.index)
+            _rs_base[_tr_idx] = _rs_tr[_tr_idx]   # 1988~ 구간은 TR 수익률로 덮어씀
+            _sp_tr_start = _rs_tr.index[0].strftime("%Y-%m-%d")
+            _use_sp_tr   = True
+        else:
+            _rs_base     = _rs_gspc
+            _sp_tr_start = "N/A (다운로드 실패)"
+            _use_sp_tr   = False
+
+        # ▶ 금 (GC=F, 1970~): 가격변동 수익률만 (금은 배당/이자 없음)
         _d_gold = raw["gold"].copy()
         _d_gold.index = pd.to_datetime(_d_gold.index).tz_localize(None)
         _d_gold = _d_gold.dropna().sort_index()
 
-        # 채권: us10y_history.csv(1962~) 우선 사용 → raw["us30y"] 폴백
+        # ▶ 미국 국채 10년물 금리 (FRED DGS10, 1962~): 채권 수익률 계산용
+        #   우선순위: us10y_history.csv → raw["us30y"] (^TNX, 1985~)
         _us10y_csv = pathlib.Path(__file__).parent / "us10y_history.csv"
         if _us10y_csv.exists():
             _d_yield = pd.read_csv(_us10y_csv, index_col=0, parse_dates=True)["Close"].dropna()
             _d_yield.index = pd.to_datetime(_d_yield.index).tz_localize(None)
             _d_yield = _d_yield.sort_index()
+            _bond_src_label = "FRED DGS10 (us10y_history.csv, 1962~)"
+            _bond_src_short = "FRED DGS10"
         else:
             _d_yield = raw["us30y"].copy()
             _d_yield.index = pd.to_datetime(_d_yield.index).tz_localize(None)
             _d_yield = _d_yield.dropna().sort_index()
+            _bond_src_label = "yfinance ^TNX (1985~, FRED 폴백)"
+            _bond_src_short = "^TNX"
 
-        _rs = _d_sp.pct_change().dropna()
+        # ▶ 채권 수익률 계산 (총수익 = 쿠폰 수입 + 가격 변동 - ETF 운용보수)
+        #   · 쿠폰 수입 : DGS10(%) / 100 / 252  (일별 이자 수입, ETF 분배금 근사)
+        #   · 가격 변동 : -Duration × Δyield / 100  (금리 변화에 따른 채권 가격 등락)
+        #   · ETF 운용보수: 0.15%/년 (IEF·TLT 기준), 일별 차감
+        _BOND_EXPENSE = 0.0015   # 연 0.15% ETF 운용보수
+        _rb_coupon    = (_d_yield / 100 / 252) - (_BOND_EXPENSE / 252)
+        _rb_price     = (-DURATION_US * _d_yield.diff() / 100)
+        _rb_total     = (_rb_coupon + _rb_price).dropna()
+
+        # ▶ 공통 날짜 교집합 (세 자산 모두 데이터 있는 거래일만)
+        _rs = _rs_base.dropna()
         _rg = _d_gold.pct_change().dropna()
-        _rb = (-DURATION_US * _d_yield.diff() / 100).dropna()
+        _rb = _rb_total
         _common = _rs.index.intersection(_rg.index).intersection(_rb.index)
         _rs = _rs.reindex(_common)
         _rg = _rg.reindex(_common)
         _rb = _rb.reindex(_common)
-        _px = _d_sp.reindex(_common).ffill()
+        _px = _d_sp.reindex(_common).ffill()   # 트레일링 스탑 기준 가격 (^GSPC)
 
         # 투자시즌 (기존 strategies 재사용)
         _inv_na = strategies["sp500"]["inv_na"]
@@ -5167,23 +5217,31 @@ def main():
                 help="매수 또는 매도 1회 기준 수수료율. 트레일링 스탑 발동/복귀 시 적용됩니다."
             )
         with _info_col:
-            _c_start = _common[0].strftime("%Y-%m-%d")
-            _c_end   = _common[-1].strftime("%Y-%m-%d")
-            _bond_src = "FRED DGS10 (us10y_history.csv)" if (pathlib.Path(__file__).parent / "us10y_history.csv").exists() else 'yfinance ^TNX'
+            _c_start  = _common[0].strftime("%Y-%m-%d")
+            _c_end    = _common[-1].strftime("%Y-%m-%d")
+            _tr_badge = (f'<span style="color:#00FF66;font-size:13px;">배당 포함({_sp_tr_start}~)</span>'
+                         f'<span style="color:#ffffff;font-size:13px;"> / </span>'
+                         f'<span style="color:#FF9100;font-size:13px;">배당 미포함(~{_sp_tr_start[:7]})</span>'
+                         if _use_sp_tr else
+                         f'<span style="color:#FF9100;font-size:13px;">배당 미포함(^SP500TR 로드 실패)</span>')
             st.markdown(
                 f'<div style="background:#0d1117;border:1px solid #1e293b;border-radius:8px;'
-                f'padding:10px 16px;margin-top:4px;">'
-                f'<span style="color:#ffffff;font-size:14px;">사용 데이터 &nbsp;|&nbsp; </span>'
-                f'<span style="color:#00FF66;font-size:14px;font-weight:700;">S&P500</span>'
-                f'<span style="color:#ffffff;font-size:14px;"> yfinance ^GSPC &nbsp;·&nbsp; </span>'
-                f'<span style="color:#FFD700;font-size:14px;font-weight:700;">금</span>'
-                f'<span style="color:#ffffff;font-size:14px;"> yfinance GC=F &nbsp;·&nbsp; </span>'
-                f'<span style="color:#00E5FF;font-size:14px;font-weight:700;">미국채 10년물</span>'
-                f'<span style="color:#ffffff;font-size:14px;"> {_bond_src}</span>'
-                f'<br>'
-                f'<span style="color:#ffffff;font-size:14px;">분석 기간 &nbsp;|&nbsp; </span>'
-                f'<span style="color:#ffffff;font-size:14px;font-weight:700;">{_c_start} ~ {_c_end}</span>'
-                f'<span style="color:#ffffff;font-size:14px;"> &nbsp;({len(_common):,}거래일)</span>'
+                f'padding:12px 16px;margin-top:4px;line-height:2.0;">'
+
+                f'<span style="color:#00FF66;font-size:14px;font-weight:800;">S&P500</span>'
+                f'<span style="color:#ffffff;font-size:13px;"> yfinance ^GSPC (1970~, 가격지수) + ^SP500TR → </span>'
+                f'{_tr_badge}<br>'
+
+                f'<span style="color:#FFD700;font-size:14px;font-weight:800;">금</span>'
+                f'<span style="color:#ffffff;font-size:13px;"> yfinance GC=F (선물 연속, 1970~) · 배당·이자 없음 · 가격변동만</span><br>'
+
+                f'<span style="color:#00E5FF;font-size:14px;font-weight:800;">미국채 10년물</span>'
+                f'<span style="color:#ffffff;font-size:13px;"> {_bond_src_label}</span><br>'
+                f'<span style="color:#ffffff;font-size:13px;">└ 총수익 = 쿠폰({_bond_src_short}/252) + 가격변동(-듀레이션×Δ금리) - ETF운용보수(0.15%/년)</span><br>'
+
+                f'<span style="color:#ffffff;font-size:13px;">분석 기간 </span>'
+                f'<span style="color:#ffffff;font-size:14px;font-weight:800;">{_c_start} ~ {_c_end}</span>'
+                f'<span style="color:#ffffff;font-size:13px;"> ({len(_common):,}거래일)</span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
