@@ -5111,9 +5111,16 @@ def main():
         _d_gold.index = pd.to_datetime(_d_gold.index).tz_localize(None)
         _d_gold = _d_gold.dropna().sort_index()
 
-        _d_yield = raw["us30y"].copy()
-        _d_yield.index = pd.to_datetime(_d_yield.index).tz_localize(None)
-        _d_yield = _d_yield.dropna().sort_index()
+        # 채권: us10y_history.csv(1962~) 우선 사용 → raw["us30y"] 폴백
+        _us10y_csv = pathlib.Path(__file__).parent / "us10y_history.csv"
+        if _us10y_csv.exists():
+            _d_yield = pd.read_csv(_us10y_csv, index_col=0, parse_dates=True)["Close"].dropna()
+            _d_yield.index = pd.to_datetime(_d_yield.index).tz_localize(None)
+            _d_yield = _d_yield.sort_index()
+        else:
+            _d_yield = raw["us30y"].copy()
+            _d_yield.index = pd.to_datetime(_d_yield.index).tz_localize(None)
+            _d_yield = _d_yield.dropna().sort_index()
 
         _rs = _d_sp.pct_change().dropna()
         _rg = _d_gold.pct_change().dropna()
