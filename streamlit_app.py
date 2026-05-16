@@ -5157,8 +5157,18 @@ def main():
             _m_states[_mdt] = _ms
         _m_state_s = pd.Series(_m_states).reindex(_common, method='ffill').fillna("normal")
 
+        # ── 수수료 입력 ──
+        _fee_col, _ = st.columns([1, 3])
+        with _fee_col:
+            _fee_input = st.number_input(
+                "수수료 (편도, %)",
+                min_value=0.0, max_value=5.0,
+                value=0.35, step=0.01, format="%.2f",
+                help="매수 또는 매도 1회 기준 수수료율. 트레일링 스탑 발동/복귀 시 적용됩니다."
+            )
+
         # ── 4개 전략 계산 (일별 포트폴리오) ──
-        _FEE = 0.0035
+        _FEE = _fee_input / 100.0
         v_bh = 100.0; v_s6 = 100.0; v_d = 100.0; v_m = 100.0
         l_bh = [];    l_s6 = [];    l_d = [];    l_m = []
         _dst = "normal"; _dpk = float(_px.iloc[0]); _dtr = float(_px.iloc[0])
