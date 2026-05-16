@@ -1181,8 +1181,23 @@ def main():
             ko_inv_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in ko_sim.iterrows()} if not ko_sim.empty else {}
             cs_inv_map = {(int(r["연도"]), r["시즌"]): bool(r["투자"]) for _, r in cs_sim.iterrows()} if not cs_sim.empty else {}
 
-            cols = ["전략8", "BH_max", "BH_min"]
-            v    = {"전략8": 100.0, "BH_max": 100.0, "BH_min": 100.0}
+            # ── 전략8+ 트레일링 스탑 초기화 (-15% / +5%) ──
+            _TRAIL_STOP = -15
+            _TRAIL_RECV = +5
+            _TRAIL_FEE  = 0.0035
+            _trail_keys = ["sp500", "nasdaq", "kospi", "kosdaq", "csi300"]
+            _px_dict = {}
+            for _tk in _trail_keys:
+                _s = raw[_tk].copy()
+                _s.index = pd.to_datetime(_s.index).tz_localize(None)
+                _px_dict[_tk] = _s.to_dict()
+            _t_state  = {k: "normal" for k in _trail_keys}
+            _t_peak   = {k: float(raw[k].dropna().iloc[0]) for k in _trail_keys}
+            _t_trough = {k: float(raw[k].dropna().iloc[0]) for k in _trail_keys}
+            _t_prev   = {k: "normal" for k in _trail_keys}
+
+            cols = ["전략8", "전략8+", "BH_max", "BH_min"]
+            v    = {"전략8": 100.0, "전략8+": 100.0, "BH_max": 100.0, "BH_min": 100.0}
             vals = {c: [] for c in cols}
             dates = []
 
@@ -1234,6 +1249,40 @@ def main():
                         + w_cs*r_cs + 0.20*r_g + 0.10*r_kr10 + 0.10*r_us
                         + w_cash*r_kr)   # 현금 → 국고채3년 운용
                 v["전략8"] *= (1 + r_s8)
+
+                # ── 전략8+ 트레일링 스탑 업데이트 ──
+                _key_w = {"sp500": w_sp, "nasdaq": w_nq, "kospi": w_ko, "kosdaq": w_kq, "csi300": w_cs}
+                _key_r = {"sp500": r_sp, "nasdaq": r_nq, "kospi": r_ko, "kosdaq": r_kq, "csi300": r_cs}
+                for _tk in _trail_keys:
+                    _p = _px_dict[_tk].get(dt)
+                    if _p is not None:
+                        _p = float(_p)
+                        if _t_state[_tk] == "normal":
+                            if _p >= _t_peak[_tk]:   _t_peak[_tk] = _p
+                            if _p <= _t_peak[_tk] * (1 + _TRAIL_STOP / 100):
+                                _t_state[_tk] = "bear"; _t_trough[_tk] = _p
+                        else:
+                            if _p <= _t_trough[_tk]: _t_trough[_tk] = _p
+                            if _p >= _t_trough[_tk] * (1 + _TRAIL_RECV / 100):
+                                _t_state[_tk] = "normal"; _t_peak[_tk] = _p; _t_trough[_tk] = _p
+                # 손절 비중 → 금1/3 + 한국채10년1/3 + 미국채10년1/3 재배분
+                _bear_w  = sum(_key_w[k] for k in _trail_keys if _t_state[k] == "bear")
+                _add_g   = _bear_w / 3.0
+                _add_kr10= _bear_w / 3.0
+                _add_us  = _bear_w / 3.0
+                # 수수료: 상태 전환 시 해당 지수 비중 × fee
+                _trail_cost = sum(_key_w[k] * _TRAIL_FEE
+                                  for k in _trail_keys if _t_state[k] != _t_prev[k])
+                for _tk in _trail_keys: _t_prev[_tk] = _t_state[_tk]
+                r_s8p = (
+                    sum(_key_w[k] * _key_r[k] for k in _trail_keys if _t_state[k] == "normal")
+                    + (0.20 + _add_g)    * r_g
+                    + (0.10 + _add_kr10) * r_kr10
+                    + (0.10 + _add_us)   * r_us
+                    + w_cash * r_kr
+                    - _trail_cost
+                )
+                v["전략8+"] *= (1 + r_s8p)
 
                 bm_stk *= (1+r_sp); bm_gld *= (1+r_g); bm_bnd *= (1+r_us)
                 bl_stk *= (1+r_sp); bl_gld *= (1+r_g); bl_bnd *= (1+r_us)
@@ -1392,6 +1441,7 @@ def main():
                 st.warning("데이터 없음")
             else:
                 s8_cum,  s8_cagr,  s8_mdd  = _stats(pf8["전략8"])
+                s8p_cum, s8p_cagr, s8p_mdd = _stats(pf8["전략8+"])
                 bx_cum,  bx_cagr,  bx_mdd  = _stats(pf8["BH_max"])
                 bn_cum,  bn_cagr,  bn_mdd  = _stats(pf8["BH_min"])
                 y0 = pf8["전략8"].index[0].year
@@ -1407,18 +1457,24 @@ def main():
                     f"🌏 전략8  (SP500+KOSPI+CSI300 3지수 동적배분){fee_badge}",
                     "#0a1020", "#38bdf8", s8_cum, s8_cagr, s8_mdd, large=True
                 )
+                hero8p = _card_html(
+                    f"🛡️ 전략8+  (트레일링 스탑 -15%/+5%){fee_badge}",
+                    "#0a1820", "#f59e0b", s8p_cum, s8p_cagr, s8p_mdd, large=True
+                )
                 cmp8 = (
                     _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", bx_cum, bx_cagr, bx_mdd)
                   + _card_html("📊 주식25% BH", "#111827", "#6b7280", bn_cum, bn_cagr, bn_mdd)
                 )
                 st.markdown(
-                    f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px;">'
+                    f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:4px;">'
                     f'  {hero8}'
-                    f'  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">{cmp8}</div>'
+                    f'  {hero8p}'
+                    f'  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start;">{cmp8}</div>'
                     f'</div>'
                     f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
                     f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준 · '
-                    f'금20% + 한국채3년10% + 한국채10년5% + 미국채10년5% 고정 · 3지수 투자시즌 합의에 따라 주식 30~60% 동적조절</div>',
+                    f'금20% + 한국채10년10% + 미국채10년10% 고정 · 3지수 투자시즌 합의에 따라 주식 30~60% 동적조절 · '
+                    f'전략8+: 5지수 독립 트레일링 스탑 (-15%→손절 / +5%→복귀, 편도 수수료 0.35%)</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -1426,7 +1482,8 @@ def main():
                 fee_title = f"  (수수료 {_applied_fee:.2f}% 반영)" if _applied_fee > 0 else ""
                 fig_s8 = go.Figure()
                 for col, name, color, width in [
-                    ("전략8",  "🌏 전략8",      "#38bdf8", 2.5),
+                    ("전략8",  "🌏 전략8",      "#38bdf8", 2.0),
+                    ("전략8+", "🛡️ 전략8+",    "#f59e0b", 2.0),
                     ("BH_max", "📈 주식50%BH",  "#6366f1", 1.0),
                     ("BH_min", "📊 주식25%BH",  "#6b7280", 1.0),
                 ]:
@@ -4592,6 +4649,80 @@ def main():
             unsafe_allow_html=True,
         )
 
+        # ── 🛡️ 트레일링 스탑 현황 패널 ──
+        _TRAIL_STOP_LS = -15
+        _TRAIL_RECV_LS = +5
+        _trail_idx_info = [
+            ("sp500",   "🇺🇸 S&P500",  "KODEX 미국S&P500"),
+            ("nasdaq",  "💻 NASDAQ",    "KODEX 나스닥100"),
+            ("kospi",   "🇰🇷 KOSPI",   "KODEX 200"),
+            ("kosdaq",  "📱 KOSDAQ",    "KODEX 코스닥150"),
+            ("csi300",  "🇨🇳 CSI300",  "KODEX CSI300"),
+        ]
+        _trail_cards_html = ""
+        _any_bear = False
+        for _tkey, _tlabel, _tsub in _trail_idx_info:
+            _traw = raw.get(_tkey, pd.Series(dtype=float))
+            if hasattr(_traw, "empty") and _traw.empty:
+                continue
+            _traw = _traw.copy()
+            _traw.index = pd.to_datetime(_traw.index).tz_localize(None)
+            _traw = _traw.dropna().sort_index()
+            if len(_traw) < 2:
+                continue
+            # 트레일링 피크/저점 계산 (전체 히스토리)
+            _t_pk = float(_traw.iloc[0]); _t_tr = float(_traw.iloc[0]); _t_st = "normal"
+            for _px_v in _traw.values:
+                _px_v = float(_px_v)
+                if _t_st == "normal":
+                    if _px_v >= _t_pk: _t_pk = _px_v
+                    if _px_v <= _t_pk * (1 + _TRAIL_STOP_LS / 100):
+                        _t_st = "bear"; _t_tr = _px_v
+                else:
+                    if _px_v <= _t_tr: _t_tr = _px_v
+                    if _px_v >= _t_tr * (1 + _TRAIL_RECV_LS / 100):
+                        _t_st = "normal"; _t_pk = _px_v; _t_tr = _px_v
+            _cur_px  = float(_traw.iloc[-1])
+            _from_pk = (_cur_px / _t_pk - 1) * 100
+            _from_tr = (_cur_px / _t_tr - 1) * 100 if _t_st == "bear" else None
+            _to_recv = (_TRAIL_RECV_LS - _from_tr) if _from_tr is not None else None
+            if _t_st == "bear": _any_bear = True
+            _is_bear  = (_t_st == "bear")
+            _st_bg    = "#2d0000" if _is_bear else "#052e16"
+            _st_bdr   = "#991b1b" if _is_bear else "#16a34a"
+            _st_icon  = "🔴" if _is_bear else "🟢"
+            _st_lbl   = "손절중" if _is_bear else "정상"
+            _st_clr   = "#f87171" if _is_bear else "#34d399"
+            if _is_bear and _to_recv is not None:
+                _sub_line = (f'<div style="color:#fbbf24;font-size:10px;margin-top:4px;">'
+                             f'저점+{_from_tr:+.1f}% · 복귀까지 +{_to_recv:.1f}%</div>')
+            else:
+                _pk_clr = "#f87171" if _from_pk < _TRAIL_STOP_LS else "#9ca3af"
+                _sub_line = (f'<div style="color:{_pk_clr};font-size:10px;margin-top:4px;">'
+                             f'고점 대비 {_from_pk:+.1f}%</div>')
+            _trail_cards_html += (
+                f'<div style="background:{_st_bg};border:1.5px solid {_st_bdr};border-radius:10px;'
+                f'padding:12px;text-align:center;">'
+                f'<div style="font-size:18px;margin-bottom:3px;">{_st_icon}</div>'
+                f'<div style="color:#9ca3af;font-size:10px;font-weight:700;margin-bottom:2px;">{_tlabel}</div>'
+                f'<div style="color:{_st_clr};font-size:13px;font-weight:800;margin-bottom:2px;">{_st_lbl}</div>'
+                f'<div style="color:#6b7280;font-size:9px;margin-bottom:2px;">{_tsub}</div>'
+                f'{_sub_line}'
+                f'</div>'
+            )
+        _trail_title_color = "#f87171" if _any_bear else "#34d399"
+        _trail_title_icon  = "🔴 손절 발동 중" if _any_bear else "🟢 전체 정상"
+        st.markdown(
+            f'<div style="background:#0d1117;border:1px solid #1e2a3a;border-radius:10px;'
+            f'padding:10px 14px 8px 14px;margin-bottom:12px;">'
+            f'<div style="color:{_trail_title_color};font-size:11px;font-weight:800;'
+            f'letter-spacing:1px;margin-bottom:8px;">🛡️ 트레일링 스탑 현황 (손절 -15% / 복귀 +5%) &nbsp;'
+            f'<span style="font-size:11px;color:{_trail_title_color}">{_trail_title_icon}</span></div>'
+            f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">'
+            f'{_trail_cards_html}</div></div>',
+            unsafe_allow_html=True,
+        )
+
         # ── 현재 비중: 시즌 시작 이후 가격 변동 반영 (drift) ──
         _kodex_px   = load_kodex_etfs()
         _season_ts  = pd.Timestamp(season_start)
@@ -4798,7 +4929,8 @@ def main():
             if not pf_h:
                 st.warning("데이터 없음")
             else:
-                s8_h = pf_h["전략8"]
+                s8_h  = pf_h["전략8"]
+                s8p_h = pf_h["전략8+"]
                 y0h = s8_h.index[0].year
                 y1h = s8_h.index[-1].year
 
@@ -4812,12 +4944,13 @@ def main():
                 sp_bh = _rebase("sp500", s8_h.index[0])
                 ko_bh = _rebase("kospi", s8_h.index[0])
 
-                c8,  g8,  m8  = _stats(s8_h)
-                cs_, gs_, ms_ = _stats(sp_bh)
-                ck_, gk_, mk_ = _stats(ko_bh)
+                c8,  g8,  m8   = _stats(s8_h)
+                c8p, g8p, m8p  = _stats(s8p_h)
+                cs_, gs_, ms_  = _stats(sp_bh)
+                ck_, gk_, mk_  = _stats(ko_bh)
 
                 # 성과 카드
-                c1h, c2h, c3h = st.columns(3)
+                c1h, c2h, c3h, c4h = st.columns(4)
                 with c1h:
                     st.markdown(
                         _card_html(f"🌏 전략8 백테스트 ({y0h}~{y1h})",
@@ -4825,9 +4958,14 @@ def main():
                         unsafe_allow_html=True)
                 with c2h:
                     st.markdown(
-                        _card_html("🇺🇸 S&P500 BH", "#0d0d20", "#6366f1", cs_, gs_, ms_),
+                        _card_html(f"🛡️ 전략8+ 백테스트 ({y0h}~{y1h})",
+                                   "#0a1820", "#f59e0b", c8p, g8p, m8p, large=True),
                         unsafe_allow_html=True)
                 with c3h:
+                    st.markdown(
+                        _card_html("🇺🇸 S&P500 BH", "#0d0d20", "#6366f1", cs_, gs_, ms_),
+                        unsafe_allow_html=True)
+                with c4h:
                     st.markdown(
                         _card_html("🇰🇷 KOSPI BH", "#111827", "#22c55e", ck_, gk_, mk_),
                         unsafe_allow_html=True)
@@ -4846,9 +4984,10 @@ def main():
                 # 누적 성과 차트
                 fig_h = go.Figure()
                 for s_plot, nm_h, clr_h, w_h in [
-                    (s8_h,  "🌏 전략8",    "#38bdf8", 2.5),
-                    (sp_bh, "🇺🇸 S&P500", "#6366f1", 1.0),
-                    (ko_bh, "🇰🇷 KOSPI",  "#22c55e", 1.0),
+                    (s8_h,  "🌏 전략8",     "#38bdf8", 2.0),
+                    (s8p_h, "🛡️ 전략8+",  "#f59e0b", 2.0),
+                    (sp_bh, "🇺🇸 S&P500",  "#6366f1", 1.0),
+                    (ko_bh, "🇰🇷 KOSPI",   "#22c55e", 1.0),
                 ]:
                     sh = s_plot.resample("W").last()
                     fig_h.add_trace(go.Scatter(
@@ -4874,9 +5013,10 @@ def main():
                 # MDD 차트
                 st.markdown("#### 📉 낙폭(Drawdown) 추이")
                 fig_ddh = _make_dd_fig(
-                    [(s8_h,  "🌏 전략8",    "#38bdf8"),
-                     (sp_bh, "🇺🇸 S&P500", "#6366f1"),
-                     (ko_bh, "🇰🇷 KOSPI",  "#22c55e")],
+                    [(s8_h,  "🌏 전략8",     "#38bdf8"),
+                     (s8p_h, "🛡️ 전략8+",  "#f59e0b"),
+                     (sp_bh, "🇺🇸 S&P500",  "#6366f1"),
+                     (ko_bh, "🇰🇷 KOSPI",   "#22c55e")],
                     "고점 대비 낙폭 (%)",
                 )
                 st.plotly_chart(fig_ddh, use_container_width=True)
