@@ -873,7 +873,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "🧪 테스트모드"])
+    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8, main_tab9 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "🧪 테스트모드", "📋 데이터 정보"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -5314,6 +5314,276 @@ def main():
             '<div style="color:#475569;font-size:11px;margin-top:8px;">' +
             '* 포트폴리오 구성: 주식(전략6비중) + 금25% + 미국채25% | 손절 -15% / 복귀 +5% | 수수료 0.35% 편도' +
             '</div>',
+            unsafe_allow_html=True
+        )
+
+
+    # ════════════════════════════════════════════════════════
+    # TAB 9: 📋 데이터 정보
+    # ════════════════════════════════════════════════════════
+    with main_tab9:
+        st.markdown('<div class="section-title">📋 데이터 정보 — 사용 데이터 출처 및 기간</div>', unsafe_allow_html=True)
+
+        _app_dir = pathlib.Path(__file__).parent
+
+        # ── CSV 기반 데이터 정의 ──
+        _csv_data = [
+            {
+                "key": "sp500",        "name": "S&P500",
+                "csv": "sp500_history.csv",
+                "yf_ticker": "^GSPC",
+                "source": "yfinance (^GSPC)",
+                "note": "로컬 CSV(1970~) + yfinance 최신 보완",
+                "usage": "자산배분, 역대폭락일, 시장사이클 등 전체",
+            },
+            {
+                "key": "nasdaq",       "name": "NASDAQ",
+                "csv": "nasdaq_history.csv",
+                "yf_ticker": "^IXIC",
+                "source": "yfinance (^IXIC)",
+                "note": "로컬 CSV(1970~) + yfinance 최신 보완",
+                "usage": "자산배분, 역대폭락일, 시장사이클 등 전체",
+            },
+            {
+                "key": "kospi",        "name": "KOSPI",
+                "csv": "kospi_history.csv",
+                "yf_ticker": "^KS11",
+                "source": "yfinance (^KS11)",
+                "note": "로컬 CSV(1980~) + yfinance 최신 보완",
+                "usage": "자산배분, 역대폭락일, 시장사이클 등 전체",
+            },
+            {
+                "key": "dow",          "name": "DOW Jones",
+                "csv": "dow_history.csv",
+                "yf_ticker": "^DJI",
+                "source": "yfinance (^DJI)",
+                "note": "로컬 CSV(1970~) + yfinance 최신 보완",
+                "usage": "자산배분, 역대폭락일, 시장사이클 등 전체",
+            },
+            {
+                "key": "csi300",       "name": "CSI300 (중국)",
+                "csv": "csi300_history.csv",
+                "yf_ticker": "000300.SS",
+                "source": "yfinance (000300.SS)",
+                "note": "로컬 CSV(2005~) + yfinance 최신 보완",
+                "usage": "자산배분, 역대폭락일, 시장사이클 등 전체",
+            },
+            {
+                "key": "gold",         "name": "금 (Gold)",
+                "csv": "gold_history.csv",
+                "yf_ticker": "GC=F",
+                "source": "yfinance (GC=F)",
+                "note": "로컬 CSV(1970~) + yfinance 최신 보완",
+                "usage": "자산배분 포트폴리오 구성 (25% 고정)",
+            },
+            {
+                "key": "us10y",        "name": "미국 국채 10년물 금리",
+                "csv": "us10y_history.csv",
+                "yf_ticker": "^TNX",
+                "source": "FRED (DGS10) + yfinance (^TNX)",
+                "note": "FRED DGS10(1962~) CSV 저장 → 테스트모드 전용",
+                "usage": "🧪 테스트모드 채권 수익률 계산",
+            },
+        ]
+
+        # ── yfinance 전용 데이터 ──
+        _yf_only_data = [
+            {
+                "name": "KOSDAQ",
+                "yf_ticker": "^KQ11",
+                "source": "yfinance (^KQ11)",
+                "start": "1997-01-01",
+                "note": "로컬 CSV 없음, 실시간 다운로드",
+                "usage": "자산배분, 역대폭락일 등 전체",
+            },
+            {
+                "name": "미국 국채 10년물 (앱 내부)",
+                "yf_ticker": "^TNX / FRED DGS10",
+                "source": "FRED DGS10 → 실패 시 yfinance ^TNX",
+                "start": "1962-01-01 (FRED) / 1985-01-01 (Cloud)",
+                "note": "Cloud 환경에서는 FRED 불가 → ^TNX 폴백",
+                "usage": "자산배분 채권 수익률 계산 (미국 지수)",
+            },
+            {
+                "name": "VIX (공포지수)",
+                "yf_ticker": "^VIX",
+                "source": "yfinance (^VIX)",
+                "start": "1990-01-01",
+                "note": "실시간 다운로드",
+                "usage": "저점 레이더 탭",
+            },
+            {
+                "name": "한국 국고채3년 ETF (KODEX)",
+                "yf_ticker": "114820.KS",
+                "source": "yfinance (114820.KS)",
+                "start": "2009-01-01",
+                "note": "현금 대체 자산 (전략8 포트폴리오)",
+                "usage": "실사용 전략 탭 (전략8 구성)",
+            },
+            {
+                "name": "한국 국채선물10년 ETF (KODEX)",
+                "yf_ticker": "148070.KS",
+                "source": "yfinance (148070.KS)",
+                "start": "2012-01-01",
+                "note": "한국 장기채 (한국 지수용 채권)",
+                "usage": "자산배분 채권 수익률 계산 (한국 지수)",
+            },
+            {
+                "name": "KODEX 미국10년국채선물",
+                "yf_ticker": "304660.KS",
+                "source": "yfinance (304660.KS)",
+                "start": "2019-09-25",
+                "note": "미국 장기채 ETF (원화)",
+                "usage": "실사용 전략 탭 (전략8 구성)",
+            },
+        ]
+
+        # ── 실제 포트폴리오 ──
+        _portfolio_csv = _app_dir / "portfolio_history.csv"
+
+        # ═══ 섹션 1: CSV 기반 데이터 ═══
+        st.markdown(
+            '<div style="color:#38bdf8;font-size:15px;font-weight:800;margin:18px 0 10px;">'
+            '📁 로컬 CSV 파일 기반 (yfinance 최신 데이터 보완)</div>',
+            unsafe_allow_html=True
+        )
+
+        _th = "padding:9px 14px;text-align:center;font-size:12px;font-weight:700;"
+        _tbl1 = (
+            '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+            '<tr style="background:#1e3a5f;">'
+            f'<th style="{_th}text-align:left;color:#e2e8f0;">데이터명</th>'
+            f'<th style="{_th}color:#94a3b8;">CSV 파일</th>'
+            f'<th style="{_th}color:#94a3b8;">데이터 기간</th>'
+            f'<th style="{_th}color:#94a3b8;">행 수</th>'
+            f'<th style="{_th}color:#94a3b8;">CSV 수정일</th>'
+            f'<th style="{_th}color:#94a3b8;">출처 (yfinance 티커)</th>'
+            f'<th style="{_th}color:#94a3b8;text-align:left;">비고</th>'
+            '</tr>'
+        )
+
+        for _i, _d in enumerate(_csv_data):
+            _bg = "#0d1117" if _i % 2 == 0 else "#111827"
+            _csv_path = _app_dir / _d["csv"]
+            if _csv_path.exists():
+                try:
+                    _df = pd.read_csv(_csv_path, index_col=0, parse_dates=True)
+                    _df.index = pd.to_datetime(_df.index).tz_localize(None)
+                    _s_dt = _df.index.min().strftime("%Y-%m-%d")
+                    _e_dt = _df.index.max().strftime("%Y-%m-%d")
+                    _rows = f"{len(_df):,}"
+                    _mtime = datetime.datetime.fromtimestamp(_csv_path.stat().st_mtime).strftime("%Y-%m-%d")
+                    _period = f"{_s_dt} ~ {_e_dt}"
+                    _csv_label = f'<span style="color:#fbbf24;">{_d["csv"]}</span>'
+                except Exception:
+                    _period = "읽기 오류"; _rows = "-"; _mtime = "-"
+                    _csv_label = f'<span style="color:#f87171;">{_d["csv"]} (오류)</span>'
+            else:
+                _period = "파일 없음"; _rows = "-"; _mtime = "-"
+                _csv_label = f'<span style="color:#f87171;">{_d["csv"]} (없음)</span>'
+
+            _tbl1 += (
+                f'<tr style="background:{_bg};">'
+                f'<td style="padding:8px 14px;color:#ffffff;font-weight:700;">{_d["name"]}</td>'
+                f'<td style="padding:8px 14px;text-align:center;">{_csv_label}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#e2e8f0;">{_period}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#94a3b8;">{_rows}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#64748b;">{_mtime}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#38bdf8;">{_d["source"]}</td>'
+                f'<td style="padding:8px 14px;color:#94a3b8;">{_d["note"]}</td>'
+                '</tr>'
+            )
+        _tbl1 += '</table>'
+        st.markdown(_tbl1, unsafe_allow_html=True)
+
+        # ═══ 섹션 2: yfinance 전용 데이터 ═══
+        st.markdown(
+            '<div style="color:#34d399;font-size:15px;font-weight:800;margin:22px 0 10px;">'
+            '🌐 yfinance 실시간 다운로드 전용 (로컬 CSV 없음)</div>',
+            unsafe_allow_html=True
+        )
+
+        _tbl2 = (
+            '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+            '<tr style="background:#1e3a5f;">'
+            f'<th style="{_th}text-align:left;color:#e2e8f0;">데이터명</th>'
+            f'<th style="{_th}color:#94a3b8;">티커</th>'
+            f'<th style="{_th}color:#94a3b8;">데이터 시작</th>'
+            f'<th style="{_th}color:#94a3b8;">출처</th>'
+            f'<th style="{_th}color:#94a3b8;text-align:left;">비고</th>'
+            f'<th style="{_th}color:#94a3b8;text-align:left;">사용 탭</th>'
+            '</tr>'
+        )
+        for _i, _d in enumerate(_yf_only_data):
+            _bg = "#0d1117" if _i % 2 == 0 else "#111827"
+            _tbl2 += (
+                f'<tr style="background:{_bg};">'
+                f'<td style="padding:8px 14px;color:#ffffff;font-weight:700;">{_d["name"]}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#34d399;font-weight:700;">{_d["yf_ticker"]}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#e2e8f0;">{_d["start"]}</td>'
+                f'<td style="padding:8px 14px;text-align:center;color:#38bdf8;">{_d["source"]}</td>'
+                f'<td style="padding:8px 14px;color:#94a3b8;">{_d["note"]}</td>'
+                f'<td style="padding:8px 14px;color:#94a3b8;">{_d["usage"]}</td>'
+                '</tr>'
+            )
+        _tbl2 += '</table>'
+        st.markdown(_tbl2, unsafe_allow_html=True)
+
+        # ═══ 섹션 3: 실제 포트폴리오 데이터 ═══
+        st.markdown(
+            '<div style="color:#f59e0b;font-size:15px;font-weight:800;margin:22px 0 10px;">'
+            '💼 실제 포트폴리오 데이터</div>',
+            unsafe_allow_html=True
+        )
+
+        if _portfolio_csv.exists():
+            try:
+                _pf = pd.read_csv(_portfolio_csv)
+                _pf["date"] = pd.to_datetime(_pf["date"])
+                _pf_start  = _pf["date"].min().strftime("%Y-%m-%d")
+                _pf_end    = _pf["date"].max().strftime("%Y-%m-%d")
+                _pf_rows   = len(_pf)
+                _pf_mtime  = datetime.datetime.fromtimestamp(_portfolio_csv.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                _pf_status = f'<span style="color:#86efac;">✅ 정상</span>'
+                _pf_detail = f'{_pf_start} ~ {_pf_end} ({_pf_rows}행)'
+            except Exception as _e:
+                _pf_status = f'<span style="color:#f87171;">❌ 읽기 오류</span>'
+                _pf_detail = str(_e); _pf_mtime = "-"
+        else:
+            _pf_status = f'<span style="color:#f87171;">❌ 파일 없음</span>'
+            _pf_detail = "-"; _pf_mtime = "-"
+
+        _tbl3 = (
+            '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+            '<tr style="background:#1e3a5f;">'
+            f'<th style="{_th}text-align:left;color:#e2e8f0;">파일</th>'
+            f'<th style="{_th}color:#94a3b8;">상태</th>'
+            f'<th style="{_th}color:#94a3b8;">데이터 기간</th>'
+            f'<th style="{_th}color:#94a3b8;">최종 수정</th>'
+            f'<th style="{_th}color:#94a3b8;text-align:left;">설명</th>'
+            '</tr>'
+            f'<tr style="background:#0d1117;">'
+            f'<td style="padding:8px 14px;color:#fbbf24;font-weight:700;">portfolio_history.csv</td>'
+            f'<td style="padding:8px 14px;text-align:center;">{_pf_status}</td>'
+            f'<td style="padding:8px 14px;text-align:center;color:#e2e8f0;">{_pf_detail}</td>'
+            f'<td style="padding:8px 14px;text-align:center;color:#64748b;">{_pf_mtime}</td>'
+            f'<td style="padding:8px 14px;color:#94a3b8;">실제 계좌 일별 평가금액 (수동 입력)</td>'
+            '</tr></table>'
+        )
+        st.markdown(_tbl3, unsafe_allow_html=True)
+
+        # ═══ 섹션 4: 범례 & 구조 설명 ═══
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(
+            '<div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:16px 20px;">'
+            '<div style="color:#e2e8f0;font-size:13px;font-weight:800;margin-bottom:10px;">📌 데이터 로딩 구조</div>'
+            '<div style="color:#94a3b8;font-size:12px;line-height:1.9;">'
+            '① <span style="color:#fbbf24;">로컬 CSV 파일</span>을 먼저 읽음 (1970~, 앱과 같은 폴더에 저장)<br>'
+            '② CSV의 마지막 날짜 이후분을 <span style="color:#34d399;">yfinance</span>로 실시간 보완<br>'
+            '③ Streamlit Cloud에서는 FRED(pandas_datareader) 접속 불가 → <span style="color:#f59e0b;">^TNX 폴백</span> (1985~)<br>'
+            '④ <span style="color:#38bdf8;">us10y_history.csv</span>는 FRED DGS10을 로컬에서 수동 저장 → 테스트모드에서 1962~부터 사용 가능<br>'
+            '⑤ KOSDAQ, VIX, 채권ETF는 CSV 없이 yfinance 전용 (해당 ETF 상장일부터만 데이터 존재)'
+            '</div></div>',
             unsafe_allow_html=True
         )
 
