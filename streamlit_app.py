@@ -1038,7 +1038,7 @@ def main():
         _applied_fee = st.session_state.applied_fee
 
         def _daily_pf_series(key, fee_pct=0.0):
-            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독 (SP500·KOSPI에 전략6+ 추가)"""
+            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독 (SP500·NASDAQ·KOSPI·KOSDAQ·CSI300에 전략6+ 추가)"""
             sim = sims.get(key, pd.DataFrame())
             if sim.empty:
                 return {}
@@ -1072,7 +1072,7 @@ def main():
             _TRAIL_STOP = -15   # 고점 대비 -15% → 주식 매도
             _TRAIL_RECV =  +5   # 저점 대비 +5%  → 주식 재매수
             _TRAIL_FEE  = 0.0035  # 편도 수수료 0.35%
-            if key in ("sp500", "kospi"):
+            if key in ("sp500", "nasdaq", "kospi", "kosdaq", "csi300"):
                 cols.append("전략6+")
                 vals["전략6+"] = []
                 v["전략6+"]    = 100.0
@@ -1114,7 +1114,7 @@ def main():
                 v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
 
                 # ── 전략6+ 트레일링 스탑 ──
-                if key in ("sp500", "kospi"):
+                if key in ("sp500", "nasdaq", "kospi", "kosdaq", "csi300"):
                     _px = _stk_dict.get(dt)
                     if _px is not None:
                         _px = float(_px)
