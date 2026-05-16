@@ -55,6 +55,8 @@ for f in files_to_copy:
 # ════════════════════════════════════════════════════════
 history_csvs = [
     "sp500_history.csv",
+    "sp500tr_history.csv",      # ^SP500TR 총수익지수 (배당재투자, 1988~)
+    "sp500_div_yield.csv",      # S&P500 배당수익률 월별 (multpl.com, 1871~)
     "nasdaq_history.csv",
     "dow_history.csv",
     "gold_history.csv",

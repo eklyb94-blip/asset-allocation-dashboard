@@ -289,51 +289,106 @@ def load_fear_greed():
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_sp500_div_yield():
-    """S&P500 배당수익률 월별 시계열 (multpl.com, 1871~) — 연환산 %(%)"""
-    try:
-        import requests as _req
-        from bs4 import BeautifulSoup as _BS
-        url = "https://www.multpl.com/s-p-500-dividend-yield/table/by-month"
-        r = _req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        soup = _BS(r.text, "html.parser")
-        tbl = soup.find("table", id="datatable")
-        if tbl is None:
-            return pd.Series(dtype=float)
-        data = {}
-        for row in tbl.find_all("tr")[1:]:
-            cols = row.find_all("td")
-            if len(cols) < 2:
-                continue
+    """S&P500 배당수익률 월별 시계열 — 연환산 %(%)
+    우선순위: 로컬 sp500_div_yield.csv → multpl.com 실시간 다운로드 후 CSV 저장
+    """
+    _csv = pathlib.Path(__file__).parent / "sp500_div_yield.csv"
+
+    def _from_web():
+        try:
+            import requests as _req
+            from bs4 import BeautifulSoup as _BS
+            url = "https://www.multpl.com/s-p-500-dividend-yield/table/by-month"
+            r = _req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            soup = _BS(r.text, "html.parser")
+            tbl = soup.find("table", id="datatable")
+            if tbl is None:
+                return pd.Series(dtype=float)
+            data = {}
+            for row in tbl.find_all("tr")[1:]:
+                cols = row.find_all("td")
+                if len(cols) < 2:
+                    continue
+                try:
+                    dt  = pd.to_datetime(cols[0].text.strip())
+                    val = float(cols[1].text.strip().replace("%", "").replace("†", "").strip())
+                    data[dt] = val
+                except Exception:
+                    continue
+            if not data:
+                return pd.Series(dtype=float)
+            s = pd.Series(data).sort_index()
+            s.index = pd.to_datetime(s.index).tz_localize(None)
+            # 다운로드 성공 시 CSV 저장
             try:
-                dt  = pd.to_datetime(cols[0].text.strip())
-                val = float(cols[1].text.strip().replace("%", "").replace("†", "").strip())
-                data[dt] = val
+                s.to_frame("DivYield").to_csv(_csv, encoding="utf-8-sig")
             except Exception:
-                continue
-        if not data:
+                pass
+            return s
+        except Exception:
             return pd.Series(dtype=float)
-        s = pd.Series(data).sort_index()
-        s.index = pd.to_datetime(s.index).tz_localize(None)
-        return s
-    except Exception:
-        return pd.Series(dtype=float)
+
+    # ① 로컬 CSV 우선
+    if _csv.exists():
+        try:
+            s = pd.read_csv(_csv, index_col=0, parse_dates=True)["DivYield"].dropna()
+            s.index = pd.to_datetime(s.index).tz_localize(None)
+            s = s.sort_index()
+            # 마지막 데이터가 2개월 이상 오래됐으면 갱신
+            if (pd.Timestamp.now() - s.index[-1]).days > 60:
+                s_new = _from_web()
+                return s_new if not s_new.empty else s
+            return s
+        except Exception:
+            pass
+
+    # ② 로컬 없으면 웹 다운로드
+    return _from_web()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_sp500tr():
-    """S&P500 Total Return Index (^SP500TR) — 배당 재투자 포함, 1988~"""
-    try:
-        df = yf.download("^SP500TR", start="1970-01-01", auto_adjust=True,
-                         progress=False, multi_level_index=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        if "Close" not in df.columns or df.empty:
+    """S&P500 Total Return Index (^SP500TR) — 배당 재투자 포함, 1988~
+    우선순위: 로컬 sp500tr_history.csv → yfinance 실시간 다운로드 후 CSV 저장
+    """
+    _csv = pathlib.Path(__file__).parent / "sp500tr_history.csv"
+
+    def _from_web():
+        try:
+            df = yf.download("^SP500TR", start="1970-01-01", auto_adjust=True,
+                             progress=False, multi_level_index=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if "Close" not in df.columns or df.empty:
+                return pd.Series(dtype=float)
+            s = df["Close"].dropna()
+            s.index = pd.to_datetime(s.index).tz_localize(None)
+            s = s.sort_index()
+            # 다운로드 성공 시 CSV 저장
+            try:
+                s.to_frame("Close").to_csv(_csv, encoding="utf-8-sig")
+            except Exception:
+                pass
+            return s
+        except Exception:
             return pd.Series(dtype=float)
-        s = df["Close"].dropna()
-        s.index = pd.to_datetime(s.index).tz_localize(None)
-        return s.sort_index()
-    except Exception:
-        return pd.Series(dtype=float)
+
+    # ① 로컬 CSV 우선
+    if _csv.exists():
+        try:
+            s = pd.read_csv(_csv, index_col=0, parse_dates=True)["Close"].dropna()
+            s.index = pd.to_datetime(s.index).tz_localize(None)
+            s = s.sort_index()
+            # 마지막 데이터가 5일 이상 오래됐으면 yfinance로 최신 보완
+            if (pd.Timestamp.now() - s.index[-1]).days > 5:
+                s_new = _from_web()
+                return s_new if not s_new.empty else s
+            return s
+        except Exception:
+            pass
+
+    # ② 로컬 없으면 웹 다운로드
+    return _from_web()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
