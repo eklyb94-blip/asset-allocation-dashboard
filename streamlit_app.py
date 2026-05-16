@@ -5219,6 +5219,84 @@ def main():
             ("🌙 전략6+ (월별스탑)",  s_m,  "#38bdf8"),
         ]
 
+        # ── 전략 설명 (접이식) ──
+        with st.expander("📖 전략 설명 보기", expanded=False):
+            _desc_cols = st.columns(4)
+            _desc_items = [
+                {
+                    "title": "📈 S&P500 BH",
+                    "color": "#6366f1",
+                    "sub": "Buy & Hold (단순 매수보유)",
+                    "rows": [
+                        ("주식 비중", "100% 고정"),
+                        ("금 / 채권", "없음"),
+                        ("투자시즌", "미적용"),
+                        ("트레일링 스탑", "없음"),
+                        ("리밸런싱", "없음"),
+                    ],
+                    "desc": "S&P500을 사서 끝까지 보유. 다른 전략의 기준점(벤치마크)."
+                },
+                {
+                    "title": "⚙️ 전략6",
+                    "color": "#34d399",
+                    "sub": "시즌 비중조절 + 분산",
+                    "rows": [
+                        ("주식 비중", "투자시즌 50% / 비투자 25%"),
+                        ("금 / 채권", "각 25% 고정"),
+                        ("투자시즌", "연도 끝자리 기반 (≥60% 승률)"),
+                        ("트레일링 스탑", "없음"),
+                        ("리밸런싱", "매일 (일별 비중 유지)"),
+                    ],
+                    "desc": "투자시즌엔 주식 50%, 비투자엔 25%로 줄이고 금·채권으로 방어. 스탑 없이 분산만으로 MDD 개선."
+                },
+                {
+                    "title": "🚀 전략6+ (일별스탑)",
+                    "color": "#f59e0b",
+                    "sub": "전략6 + 매일 스탑 감시",
+                    "rows": [
+                        ("주식 비중", "투자시즌 50% / 비투자 25%"),
+                        ("금 / 채권", "각 25% (스탑 시 비중 증가)"),
+                        ("투자시즌", "연도 끝자리 기반"),
+                        ("트레일링 스탑", "매일 종가 감시 — 고점 대비 -15% 발동"),
+                        ("스탑 복귀", "저점 대비 +5% 회복 시 재진입"),
+                    ],
+                    "desc": "매 거래일 종가로 낙폭 감시. 빠르게 반응하지만 횡보장에서 잦은 손절(whipsaw) 발생 가능."
+                },
+                {
+                    "title": "🌙 전략6+ (월별스탑)",
+                    "color": "#38bdf8",
+                    "sub": "전략6 + 월말 스탑 감시",
+                    "rows": [
+                        ("주식 비중", "투자시즌 50% / 비투자 25%"),
+                        ("금 / 채권", "각 25% (스탑 시 비중 증가)"),
+                        ("투자시즌", "연도 끝자리 기반"),
+                        ("트레일링 스탑", "월말 종가만 감시 — 고점 대비 -15% 발동"),
+                        ("스탑 복귀", "저점 대비 +5% 회복 시 재진입"),
+                    ],
+                    "desc": "월말 종가로만 낙폭 판단. 잦은 whipsaw 없이 큰 하락만 잡아냄. 실제 운용에 가장 현실적인 방식."
+                },
+            ]
+            for _dc, _di in zip(_desc_cols, _desc_items):
+                with _dc:
+                    _rows_html = "".join(
+                        f'<tr><td style="color:#94a3b8;padding:3px 6px;font-size:11px;">{k}</td>'
+                        f'<td style="color:#e2e8f0;padding:3px 6px;font-size:11px;font-weight:600;">{v}</td></tr>'
+                        for k, v in _di["rows"]
+                    )
+                    st.markdown(
+                        f'''<div style="background:#0d1117;border:2px solid {_di["color"]};
+                        border-radius:10px;padding:14px;height:100%;">
+                        <div style="color:{_di["color"]};font-size:13px;font-weight:800;margin-bottom:2px;">{_di["title"]}</div>
+                        <div style="color:#64748b;font-size:10px;margin-bottom:10px;">{_di["sub"]}</div>
+                        <table style="width:100%;border-collapse:collapse;">{_rows_html}</table>
+                        <div style="color:#94a3b8;font-size:11px;margin-top:10px;padding-top:8px;
+                        border-top:1px solid #1e293b;line-height:1.6;">{_di["desc"]}</div>
+                        </div>''',
+                        unsafe_allow_html=True
+                    )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
         # ── 성과 카드 ──
         _tm_cols = st.columns(4)
         for _col, (nm, s, _clr) in zip(_tm_cols, _strats):
