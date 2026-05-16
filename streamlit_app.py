@@ -1038,7 +1038,7 @@ def main():
         _applied_fee = st.session_state.applied_fee
 
         def _daily_pf_series(key, fee_pct=0.0):
-            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독"""
+            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독 (SP500만 전략6+ 추가)"""
             sim = sims.get(key, pd.DataFrame())
             if sim.empty:
                 return {}
@@ -1067,6 +1067,22 @@ def main():
             bm_stk, bm_gld, bm_bnd          = 50.0, 25.0, 25.0
             bl_stk, bl_gld, bl_bnd, bl_csh  = 25.0, 25.0, 25.0, 25.0
             prev_season_key = None
+
+            # ── 전략6+ 트레일링 스탑 (SP500 전용) ──
+            _TRAIL_STOP = -15   # 고점 대비 -15% → 주식 매도
+            _TRAIL_RECV =  +5   # 저점 대비 +5%  → 주식 재매수
+            _TRAIL_FEE  = 0.0035  # 편도 수수료 0.35%
+            if key == "sp500":
+                cols.append("전략6+")
+                vals["전략6+"] = []
+                v["전략6+"]    = 100.0
+                _sp_px   = raw["sp500"].copy()
+                _sp_px.index = pd.to_datetime(_sp_px.index).tz_localize(None)
+                _sp_dict = _sp_px.to_dict()
+                _t_state  = "normal"
+                _t_peak   = float(_sp_px.iloc[0])
+                _t_trough = float(_sp_px.iloc[0])
+                _t_prev   = "normal"
 
             for dt in d_stk.index:
                 mo = dt.month
@@ -1097,7 +1113,31 @@ def main():
                 v["BH_max"] = bm_stk + bm_gld + bm_bnd
                 v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
 
-                for c in cols: vals[c].append(v[c])
+                # ── 전략6+ 트레일링 스탑 ──
+                if key == "sp500":
+                    _px = _sp_dict.get(dt)
+                    if _px is not None:
+                        _px = float(_px)
+                        if _t_state == "normal":
+                            if _px >= _t_peak:  _t_peak = _px
+                            if _px <= _t_peak * (1 + _TRAIL_STOP / 100):
+                                _t_state = "bear";  _t_trough = _px
+                        else:
+                            if _px <= _t_trough: _t_trough = _px
+                            if _px >= _t_trough * (1 + _TRAIL_RECV / 100):
+                                _t_state = "normal"; _t_peak = _px; _t_trough = _px
+                    _bw  = 0.50 if invest else 0.25
+                    _fee = _bw * _TRAIL_FEE if _t_state != _t_prev else 0.0
+                    _t_prev = _t_state
+                    if _t_state == "bear":
+                        # 주식 0%, 매도분(bw)을 금/채권/현금 1/3씩 배분 (현금수익=0)
+                        _r = (0.25 + _bw/3)*rg + (0.25 + _bw/3)*rb - _fee
+                    else:
+                        _r = _bw*rs + 0.25*rg + 0.25*rb
+                    v["전략6+"] *= (1 + _r)
+                    vals["전략6+"].append(v["전략6+"])
+
+                for c in [c for c in cols if c != "전략6+"]: vals[c].append(v[c])
                 dates.append(dt)
 
             return {c: pd.Series(vals[c], index=dates) for c in cols}
@@ -1250,6 +1290,9 @@ def main():
             b5_cum, b5_cagr, b5_mdd = _stats(pf["BH_max"])
             b2_cum, b2_cagr, b2_mdd = _stats(pf["BH_min"])
             sk_cum, sk_cagr, sk_mdd = _stats(pf["주식단독"])
+            has_trail = "전략6+" in pf
+            if has_trail:
+                tp_cum, tp_cagr, tp_mdd = _stats(pf["전략6+"])
 
             y0 = pf["전략6"].index[0].year
             y1 = pf["전략6"].index[-1].year
@@ -1261,34 +1304,60 @@ def main():
                 f"수수료 {fee_pct:.2f}% 반영</span>"
                 if fee_pct > 0 else ""
             )
-            # ── 전략6 히어로 카드 ──
-            hero = _card_html(f"⚙️ 전략6{fee_badge}",
+            # ── 카드 레이아웃 ──
+            if has_trail:
+                # 전략6+ 있을 때: 히어로 2개 + 비교 3개
+                hero = (
+                    _card_html(f"⚙️ 전략6{fee_badge}",
                                "#071a10", "#16a34a", s6_cum, s6_cagr, s6_mdd, large=True)
-            # ── 비교 카드 3개 ──
-            cmp = (
-                  _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", b5_cum, b5_cagr, b5_mdd)
-                + _card_html("📊 주식25% BH", "#111827", "#6b7280", b2_cum, b2_cagr, b2_mdd)
-                + _card_html("💹 주식단독",   "#1a1305", "#f59e0b", sk_cum, sk_cagr, sk_mdd)
-            )
-            st.markdown(
-                f'<div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;margin-bottom:4px;">'
-                f'  {hero}'
-                f'  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">{cmp}</div>'
-                f'</div>'
-                f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
-                f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준</div>',
-                unsafe_allow_html=True,
-            )
+                  + _card_html(f"🚀 전략6+ <span style='font-size:10px;color:#fb923c;'>(-15%/+5%)</span>",
+                               "#0d1a2e", "#38bdf8", tp_cum, tp_cagr, tp_mdd, large=True)
+                )
+                cmp = (
+                      _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", b5_cum, b5_cagr, b5_mdd)
+                    + _card_html("📊 주식25% BH", "#111827", "#6b7280", b2_cum, b2_cagr, b2_mdd)
+                    + _card_html("💹 주식단독",   "#1a1305", "#f59e0b", sk_cum, sk_cagr, sk_mdd)
+                )
+                st.markdown(
+                    f'<div style="display:grid;grid-template-columns:2fr 3fr;gap:14px;margin-bottom:4px;">'
+                    f'  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">{hero}</div>'
+                    f'  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">{cmp}</div>'
+                    f'</div>'
+                    f'<div style="color:#6b7280;font-size:10px;margin-bottom:10px;">'
+                    f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준 &nbsp;|&nbsp; '
+                    f'전략6+: 트레일링스탑 -15% 매도 / +5% 복귀 · 수수료 0.35% 편도</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                # 기존 레이아웃
+                hero = _card_html(f"⚙️ 전략6{fee_badge}",
+                                   "#071a10", "#16a34a", s6_cum, s6_cagr, s6_mdd, large=True)
+                cmp = (
+                      _card_html("📈 주식50% BH", "#0d0d20", "#6366f1", b5_cum, b5_cagr, b5_mdd)
+                    + _card_html("📊 주식25% BH", "#111827", "#6b7280", b2_cum, b2_cagr, b2_mdd)
+                    + _card_html("💹 주식단독",   "#1a1305", "#f59e0b", sk_cum, sk_cagr, sk_mdd)
+                )
+                st.markdown(
+                    f'<div style="display:grid;grid-template-columns:1fr 2fr;gap:14px;margin-bottom:4px;">'
+                    f'  {hero}'
+                    f'  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">{cmp}</div>'
+                    f'</div>'
+                    f'<div style="color:#374151;font-size:10px;margin-bottom:10px;">'
+                    f'📌 백테스트 기간 {y0}~{y1}년 · 일별 포트폴리오 기준</div>',
+                    unsafe_allow_html=True,
+                )
 
             # ── 누적 성과 비교 차트 ──
             fee_title = f"  (수수료 {fee_pct:.2f}% 반영)" if fee_pct > 0 else ""
             fig_c = go.Figure()
             chart_cfg = [
-                ("전략6",    "⚙️ 전략6",       "#34d399", 2.5),
-                ("BH_max",  "📈 주식50%BH",   "#6366f1", 1.0),
-                ("BH_min",  "📊 주식25%BH",   "#6b7280", 1.0),
-                ("주식단독", "💹 주식단독BH",   "#fbbf24", 1.0),
+                ("전략6",    "⚙️ 전략6",        "#34d399", 2.0),
+                ("BH_max",  "📈 주식50%BH",    "#6366f1", 1.0),
+                ("BH_min",  "📊 주식25%BH",    "#6b7280", 1.0),
+                ("주식단독", "💹 주식단독BH",    "#fbbf24", 1.0),
             ]
+            if has_trail:
+                chart_cfg.insert(1, ("전략6+", "🚀 전략6+", "#38bdf8", 2.5))
             for col, name, color, width in chart_cfg:
                 s = pf[col].resample("W").last()
                 fig_c.add_trace(go.Scatter(
