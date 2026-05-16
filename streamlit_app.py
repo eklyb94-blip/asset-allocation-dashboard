@@ -5298,8 +5298,11 @@ def main():
             n    = (s.index[-1] - s.index[0]).days / 365.25
             cum  = (s.iloc[-1] / s.iloc[0] - 1) * 100
             cagr = ((s.iloc[-1] / s.iloc[0]) ** (1/n) - 1) * 100 if n > 0 else 0
-            mdd  = ((s - s.cummax()) / s.cummax()).min() * 100
-            return round(cum, 1), round(cagr, 2), round(mdd, 2)
+            dd   = (s - s.cummax()) / s.cummax()
+            mdd  = dd.min() * 100
+            trough = dd.idxmin()
+            peak   = s.loc[:trough].idxmax()
+            return round(cum, 1), round(cagr, 2), round(mdd, 2), peak, trough
 
         _strats = [
             ("📈 S&P500 BH",         s_bh, "#E040FB"),
@@ -5389,7 +5392,8 @@ def main():
         # ── 성과 카드 ──
         _tm_cols = st.columns(4)
         for _col, (nm, s, _clr) in zip(_tm_cols, _strats):
-            cum, cagr, mdd = _tm_stats(s)
+            cum, cagr, mdd, _pk, _tr = _tm_stats(s)
+            _mdd_period = f"{_pk.strftime('%Y-%m')} ~ {_tr.strftime('%Y-%m')}"
             with _col:
                 st.markdown(
                     f'''<div style="background:#0d1117;border:2px solid {_clr};border-radius:10px;
@@ -5398,12 +5402,13 @@ def main():
                     <div style="color:#ffffff;font-size:24px;font-weight:900;">{cum:+.1f}%</div>
                     <div style="display:flex;justify-content:space-around;margin-top:10px;">
                       <div>
-                        <div style="color:#94a3b8;font-size:10px;">CAGR</div>
+                        <div style="color:#ffffff;font-size:10px;">CAGR</div>
                         <div style="color:{_clr};font-size:15px;font-weight:700;">{cagr:+.2f}%</div>
                       </div>
                       <div>
-                        <div style="color:#94a3b8;font-size:10px;">MDD</div>
+                        <div style="color:#ffffff;font-size:10px;">MDD</div>
                         <div style="color:#f87171;font-size:15px;font-weight:700;">{mdd:.1f}%</div>
+                        <div style="color:#f87171;font-size:10px;margin-top:2px;">{_mdd_period}</div>
                       </div>
                     </div></div>''',
                     unsafe_allow_html=True
