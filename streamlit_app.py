@@ -5426,6 +5426,18 @@ def main():
 
         # ── 차트 (로그 스케일) ──
         _fig_tm = go.Figure()
+
+        # 역사적 하락장 음영 구간
+        for _cname, _cs, _ce in _crashes:
+            _fig_tm.add_vrect(
+                x0=_cs, x1=_ce,
+                fillcolor="#f87171", opacity=0.08,
+                layer="below", line_width=0,
+                annotation_text=_cname.split()[0],
+                annotation_position="top left",
+                annotation=dict(font=dict(size=9, color="#f87171"), textangle=-90)
+            )
+
         for nm, s, _clr in _strats:
             _fig_tm.add_trace(go.Scatter(
                 x=s.index, y=s.values, name=nm,
