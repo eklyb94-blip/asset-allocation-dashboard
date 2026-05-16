@@ -4504,7 +4504,31 @@ def main():
             ko_imap = _inv_map("kospi")
             cs_imap = _inv_map("csi300")
 
-            cols = ["전략8_KODEX", "SP500", "KOSPI"]
+            # ── 트레일링 스탑 초기화 (-15% / +5%) ──
+            _TRAIL_STOP_K = -15
+            _TRAIL_RECV_K = +5
+            _TRAIL_FEE_K  = 0.0035
+            _trail_keys_k = ["sp500", "nasdaq", "kospi", "kosdaq", "csi300"]
+            _kpx_dict = {}
+            for _ktk in _trail_keys_k:
+                _ks = kodex.get(_ktk, pd.Series(dtype=float))
+                if not _ks.empty:
+                    _ks2 = _ks.copy()
+                    _ks2.index = pd.to_datetime(_ks2.index).tz_localize(None)
+                    _kpx_dict[_ktk] = _ks2.to_dict()
+                else:
+                    _kpx_dict[_ktk] = {}
+            def _kfirst(key):
+                s = kodex.get(key, pd.Series(dtype=float))
+                if s.empty: return 100.0
+                s2 = s.copy(); s2.index = pd.to_datetime(s2.index).tz_localize(None)
+                return float(s2.dropna().iloc[0])
+            _kt_state  = {k: "normal" for k in _trail_keys_k}
+            _kt_peak   = {k: _kfirst(k) for k in _trail_keys_k}
+            _kt_trough = {k: _kfirst(k) for k in _trail_keys_k}
+            _kt_prev   = {k: "normal" for k in _trail_keys_k}
+
+            cols = ["전략8_KODEX", "전략8+_KODEX", "SP500", "KOSPI"]
             v = {c: 100.0 for c in cols}
             vals = {c: [] for c in cols}
             dates = []
@@ -4541,6 +4565,38 @@ def main():
                 r_pf = (w_sp*r_sp + w_nq*r_nq + w_ko*r_ko + w_kq*r_kq
                         + w_cs*r_cs + 0.20*r_g + 0.10*r_kr10 + 0.10*r_us + w_cash*r_kr)
                 v["전략8_KODEX"] *= (1 + r_pf)
+
+                # ── 전략8+_KODEX 트레일링 스탑 ──
+                _kkey_w = {"sp500": w_sp, "nasdaq": w_nq, "kospi": w_ko, "kosdaq": w_kq, "csi300": w_cs}
+                _kkey_r = {"sp500": r_sp, "nasdaq": r_nq, "kospi": r_ko, "kosdaq": r_kq, "csi300": r_cs}
+                for _ktk in _trail_keys_k:
+                    _kp = _kpx_dict[_ktk].get(dt)
+                    if _kp is not None:
+                        _kp = float(_kp)
+                        if _kt_state[_ktk] == "normal":
+                            if _kp >= _kt_peak[_ktk]:   _kt_peak[_ktk] = _kp
+                            if _kp <= _kt_peak[_ktk] * (1 + _TRAIL_STOP_K / 100):
+                                _kt_state[_ktk] = "bear"; _kt_trough[_ktk] = _kp
+                        else:
+                            if _kp <= _kt_trough[_ktk]: _kt_trough[_ktk] = _kp
+                            if _kp >= _kt_trough[_ktk] * (1 + _TRAIL_RECV_K / 100):
+                                _kt_state[_ktk] = "normal"; _kt_peak[_ktk] = _kp; _kt_trough[_ktk] = _kp
+                _kbear_w   = sum(_kkey_w[k] for k in _trail_keys_k if _kt_state[k] == "bear")
+                _kadd_g    = _kbear_w / 3.0
+                _kadd_kr10 = _kbear_w / 3.0
+                _kadd_us   = _kbear_w / 3.0
+                _ktrail_cost = sum(_kkey_w[k] * _TRAIL_FEE_K
+                                   for k in _trail_keys_k if _kt_state[k] != _kt_prev[k])
+                for _ktk in _trail_keys_k: _kt_prev[_ktk] = _kt_state[_ktk]
+                r_pfp = (
+                    sum(_kkey_w[k] * _kkey_r[k] for k in _trail_keys_k if _kt_state[k] == "normal")
+                    + (0.20 + _kadd_g)    * r_g
+                    + (0.10 + _kadd_kr10) * r_kr10
+                    + (0.10 + _kadd_us)   * r_us
+                    + w_cash * r_kr
+                    - _ktrail_cost
+                )
+                v["전략8+_KODEX"] *= (1 + r_pfp)
                 v["SP500"] *= (1 + r_sp)
                 v["KOSPI"] *= (1 + r_ko)
 
@@ -4835,17 +4891,19 @@ def main():
             if not pf_k:
                 st.warning("KODEX ETF 데이터를 불러올 수 없습니다. 네트워크를 확인해 주세요.")
             else:
-                s8_k = pf_k["전략8_KODEX"]
-                sp_k = pf_k["SP500"]
-                ko_k = pf_k["KOSPI"]
-                ck,  gk,  mk  = _stats(s8_k)
-                csp, gsp, msp = _stats(sp_k)
-                cko, gko, mko = _stats(ko_k)
+                s8_k  = pf_k["전략8_KODEX"]
+                s8p_k = pf_k["전략8+_KODEX"]
+                sp_k  = pf_k["SP500"]
+                ko_k  = pf_k["KOSPI"]
+                ck,   gk,   mk   = _stats(s8_k)
+                ckp,  gkp,  mkp  = _stats(s8p_k)
+                csp,  gsp,  msp  = _stats(sp_k)
+                cko,  gko,  mko  = _stats(ko_k)
                 y0k = s8_k.index[0].strftime("%Y-%m")
                 y1k = s8_k.index[-1].strftime("%Y-%m")
 
                 # 성과 카드
-                c1k, c2k, c3k = st.columns(3)
+                c1k, c2k, c3k, c4k = st.columns(4)
                 with c1k:
                     st.markdown(
                         _card_html(f"🏦 전략8 KODEX ({y0k}~)",
@@ -4853,10 +4911,15 @@ def main():
                         unsafe_allow_html=True)
                 with c2k:
                     st.markdown(
+                        _card_html(f"🛡️ 전략8+ KODEX ({y0k}~)",
+                                   "#0a1820", "#f59e0b", ckp, gkp, mkp, large=True),
+                        unsafe_allow_html=True)
+                with c3k:
+                    st.markdown(
                         _card_html("🇺🇸 S&P500 BH (KODEX)", "#0d0d20", "#6366f1",
                                    csp, gsp, msp),
                         unsafe_allow_html=True)
-                with c3k:
+                with c4k:
                     st.markdown(
                         _card_html("🇰🇷 KOSPI BH (KODEX)", "#111827", "#22c55e",
                                    cko, gko, mko),
@@ -4879,9 +4942,10 @@ def main():
                 # 누적 성과 차트
                 fig_k = go.Figure()
                 for s_k, nm_k, clr_k, w_k in [
-                    (s8_k, "🏦 전략8 KODEX", "#38bdf8", 2.5),
-                    (sp_k, "🇺🇸 S&P500",    "#6366f1", 1.0),
-                    (ko_k, "🇰🇷 KOSPI",     "#22c55e", 1.0),
+                    (s8_k,  "🏦 전략8 KODEX",  "#38bdf8", 2.0),
+                    (s8p_k, "🛡️ 전략8+ KODEX", "#f59e0b", 2.0),
+                    (sp_k,  "🇺🇸 S&P500",     "#6366f1", 1.0),
+                    (ko_k,  "🇰🇷 KOSPI",      "#22c55e", 1.0),
                 ]:
                     fig_k.add_trace(go.Scatter(
                         x=s_k.index, y=s_k.values, name=nm_k, mode="lines",
@@ -4906,9 +4970,10 @@ def main():
                 # MDD 차트
                 st.markdown("#### 📉 낙폭(Drawdown) 추이")
                 fig_ddk = _make_dd_fig(
-                    [(s8_k, "🏦 전략8 KODEX", "#38bdf8"),
-                     (sp_k, "🇺🇸 S&P500",    "#6366f1"),
-                     (ko_k, "🇰🇷 KOSPI",     "#22c55e")],
+                    [(s8_k,  "🏦 전략8 KODEX",  "#38bdf8"),
+                     (s8p_k, "🛡️ 전략8+ KODEX", "#f59e0b"),
+                     (sp_k,  "🇺🇸 S&P500",     "#6366f1"),
+                     (ko_k,  "🇰🇷 KOSPI",      "#22c55e")],
                     "고점 대비 낙폭 (%)",
                 )
                 st.plotly_chart(fig_ddk, use_container_width=True)
