@@ -5453,14 +5453,30 @@ def main():
             ("2022      인플레이션·금리급등",      "2022-01-01", "2022-12-31"),
         ]
 
-        def _period_mdd(s, start, end):
+        def _crash_detail(s, start, end):
+            """구간 내 고점→저점→복구 날짜·기간 계산"""
             sub = s[(s.index >= start) & (s.index <= end)]
             if len(sub) < 2: return None
-            rm = sub.expanding().max()
-            return round(float(((sub - rm) / rm).min() * 100), 1)
+            cm  = sub.expanding().max()
+            dd  = (sub - cm) / cm
+            if dd.min() >= -0.001: return None
+            trough_idx = dd.idxmin()
+            peak_idx   = sub.loc[:trough_idx].idxmax()
+            mdd        = round(float(dd.min() * 100), 1)
+            peak_price = float(s[peak_idx])
+            # 복구: 저점 이후 전체 시리즈에서 고점 가격 첫 회복일
+            after     = s[s.index > trough_idx]
+            rec_dates = after[after >= peak_price]
+            rec_idx   = rec_dates.index[0] if len(rec_dates) > 0 else None
+            ptm = round((trough_idx - peak_idx).days / 30.44)   # 낙폭 기간(월)
+            ttr = round((rec_idx - trough_idx).days / 30.44) if rec_idx else None  # 복구 기간(월)
+            return dict(mdd=mdd, peak=peak_idx, trough=trough_idx,
+                        recovery=rec_idx, ptm=ptm, ttr=ttr)
 
         # 헤더
         _th_style = "padding:9px 14px;text-align:center;font-size:12px;"
+        _td_lbl   = "color:#94a3b8;font-size:10px;margin-top:2px;"
+        _td_val   = "color:#e2e8f0;font-size:10px;"
         _tbl = '<table style="width:100%;border-collapse:collapse;font-size:13px;">' + '<tr style="background:#1e3a5f;">'
         _tbl += f'<th style="{_th_style}text-align:left;color:#e2e8f0;">구간</th>'
         for nm, _, _clr in _strats:
@@ -5469,22 +5485,34 @@ def main():
 
         for i, (name, s, e) in enumerate(_crashes):
             bg = "#0d1117" if i % 2 == 0 else "#111827"
-            _tbl += f'<tr style="background:{bg};">'
-            _tbl += f'<td style="padding:8px 14px;color:#e2e8f0;font-weight:600;">{name}</td>'
+            _tbl += f'<tr style="background:{bg};vertical-align:top;">'
+            _tbl += f'<td style="padding:10px 14px;color:#e2e8f0;font-weight:600;">{name}</td>'
             for _, series, __ in _strats:
-                v = _period_mdd(series, s, e)
-                if v is None:
-                    _tbl += '<td style="padding:8px 14px;text-align:center;color:#64748b;">-</td>'
+                d = _crash_detail(series, s, e)
+                if d is None:
+                    _tbl += '<td style="padding:10px 14px;text-align:center;color:#475569;">-</td>'
                 else:
-                    vc = "#f87171" if v < -30 else "#fbbf24" if v < -15 else "#86efac"
-                    _tbl += (f'<td style="padding:8px 14px;text-align:center;'
-                             f'color:{vc};font-weight:700;">{v:+.1f}%</td>')
+                    vc      = "#f87171" if d["mdd"] < -30 else "#fbbf24" if d["mdd"] < -15 else "#86efac"
+                    rec_str = d["recovery"].strftime("%Y-%m-%d") if d["recovery"] else "미복구"
+                    ttr_str = f'{d["ttr"]}개월' if d["ttr"] else "미복구"
+                    _tbl += (
+                        f'<td style="padding:10px 14px;text-align:center;">'
+                        f'<div style="color:{vc};font-weight:800;font-size:14px;">{d["mdd"]:+.1f}%</div>'
+                        f'<div style="{_td_lbl}">📍 낙폭시작</div>'
+                        f'<div style="{_td_val}">{d["peak"].strftime("%Y-%m-%d")}</div>'
+                        f'<div style="{_td_lbl}">📉 최저점 <span style="color:#f87171;">({d["ptm"]}개월)</span></div>'
+                        f'<div style="{_td_val}">{d["trough"].strftime("%Y-%m-%d")}</div>'
+                        f'<div style="{_td_lbl}">🔄 복구 <span style="color:#86efac;">'
+                        f'({ttr_str})</span></div>'
+                        f'<div style="{_td_val}">{rec_str}</div>'
+                        f'</td>'
+                    )
             _tbl += '</tr>'
         _tbl += '</table>'
         st.markdown(_tbl, unsafe_allow_html=True)
 
         st.markdown(
-            '<div style="color:#475569;font-size:11px;margin-top:8px;">' +
+            '<div style="color:#ffffff;font-size:11px;margin-top:8px;">' +
             '* 포트폴리오 구성: 주식(전략6비중) + 금25% + 미국채25% | 손절 -15% / 복귀 +5% | 수수료 0.35% 편도' +
             '</div>',
             unsafe_allow_html=True
