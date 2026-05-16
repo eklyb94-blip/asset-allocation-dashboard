@@ -1038,7 +1038,7 @@ def main():
         _applied_fee = st.session_state.applied_fee
 
         def _daily_pf_series(key, fee_pct=0.0):
-            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독 (SP500만 전략6+ 추가)"""
+            """일별 포트폴리오 가치 시리즈 반환 — 전략6/BH/주식단독 (SP500·KOSPI에 전략6+ 추가)"""
             sim = sims.get(key, pd.DataFrame())
             if sim.empty:
                 return {}
@@ -1068,20 +1068,20 @@ def main():
             bl_stk, bl_gld, bl_bnd, bl_csh  = 25.0, 25.0, 25.0, 25.0
             prev_season_key = None
 
-            # ── 전략6+ 트레일링 스탑 (SP500 전용) ──
+            # ── 전략6+ 트레일링 스탑 (SP500·KOSPI 공통, -15%/+5%) ──
             _TRAIL_STOP = -15   # 고점 대비 -15% → 주식 매도
             _TRAIL_RECV =  +5   # 저점 대비 +5%  → 주식 재매수
             _TRAIL_FEE  = 0.0035  # 편도 수수료 0.35%
-            if key == "sp500":
+            if key in ("sp500", "kospi"):
                 cols.append("전략6+")
                 vals["전략6+"] = []
                 v["전략6+"]    = 100.0
-                _sp_px   = raw["sp500"].copy()
-                _sp_px.index = pd.to_datetime(_sp_px.index).tz_localize(None)
-                _sp_dict = _sp_px.to_dict()
+                _stk_px  = raw[key].copy()
+                _stk_px.index = pd.to_datetime(_stk_px.index).tz_localize(None)
+                _stk_dict = _stk_px.to_dict()
                 _t_state  = "normal"
-                _t_peak   = float(_sp_px.iloc[0])
-                _t_trough = float(_sp_px.iloc[0])
+                _t_peak   = float(_stk_px.iloc[0])
+                _t_trough = float(_stk_px.iloc[0])
                 _t_prev   = "normal"
 
             for dt in d_stk.index:
@@ -1114,8 +1114,8 @@ def main():
                 v["BH_min"] = bl_stk + bl_gld + bl_bnd + bl_csh
 
                 # ── 전략6+ 트레일링 스탑 ──
-                if key == "sp500":
-                    _px = _sp_dict.get(dt)
+                if key in ("sp500", "kospi"):
+                    _px = _stk_dict.get(dt)
                     if _px is not None:
                         _px = float(_px)
                         if _t_state == "normal":
