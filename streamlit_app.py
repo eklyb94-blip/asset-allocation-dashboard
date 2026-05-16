@@ -5493,14 +5493,16 @@ def main():
                     _tbl += '<td style="padding:10px 14px;text-align:center;color:#475569;">-</td>'
                 else:
                     vc      = "#f87171" if d["mdd"] < -30 else "#fbbf24" if d["mdd"] < -15 else "#86efac"
-                    rec_str = d["recovery"].strftime("%Y-%m-%d") if d["recovery"] else "미복구"
-                    ttr_str = f'{d["ttr"]}개월' if d["ttr"] else "미복구"
+                    rec_str = d["recovery"].strftime("%Y-%m-%d") if d["recovery"] is not None else "미복구"
+                    ptm_str = f'{d["ptm"]}개월' if d["ptm"] > 0 else "1개월 미만"
+                    ttr_str = (f'{d["ttr"]}개월' if d["ttr"] is not None and d["ttr"] > 0
+                               else ("1개월 미만" if d["ttr"] is not None else "미복구"))
                     _tbl += (
                         f'<td style="padding:10px 14px;text-align:center;">'
                         f'<div style="color:{vc};font-weight:800;font-size:14px;">{d["mdd"]:+.1f}%</div>'
                         f'<div style="{_td_lbl}">📍 낙폭시작</div>'
                         f'<div style="{_td_val}">{d["peak"].strftime("%Y-%m-%d")}</div>'
-                        f'<div style="{_td_lbl}">📉 최저점 <span style="color:#f87171;">({d["ptm"]}개월)</span></div>'
+                        f'<div style="{_td_lbl}">📉 최저점 <span style="color:#f87171;">({ptm_str})</span></div>'
                         f'<div style="{_td_val}">{d["trough"].strftime("%Y-%m-%d")}</div>'
                         f'<div style="{_td_lbl}">🔄 복구 <span style="color:#86efac;">'
                         f'({ttr_str})</span></div>'
