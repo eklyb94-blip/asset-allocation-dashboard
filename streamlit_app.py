@@ -5678,15 +5678,85 @@ def main():
 
         _app_dir = pathlib.Path(__file__).parent
 
+        # ════════════════════════════════════════════════════════
+        # S&P500 구간별 상세 정보
+        # ════════════════════════════════════════════════════════
+        st.markdown(
+            '<div style="color:#00FF66;font-size:15px;font-weight:800;margin:8px 0 10px;">'
+            '📈 S&P500 — 구간별 데이터 상세</div>',
+            unsafe_allow_html=True
+        )
+
+        _sp_th = "padding:9px 14px;text-align:center;font-size:12px;font-weight:700;"
+        _sp_td = "padding:9px 14px;font-size:12px;"
+        _sp_tbl = (
+            '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+            '<tr style="background:#1e3a5f;">'
+            f'<th style="{_sp_th}text-align:left;color:#e2e8f0;">구간</th>'
+            f'<th style="{_sp_th}color:#e2e8f0;">소스</th>'
+            f'<th style="{_sp_th}color:#e2e8f0;">티커</th>'
+            f'<th style="{_sp_th}color:#e2e8f0;">배당 포함</th>'
+            f'<th style="{_sp_th}color:#e2e8f0;text-align:left;">배당 산출 방식</th>'
+            f'<th style="{_sp_th}color:#e2e8f0;text-align:left;">저장 파일</th>'
+            f'<th style="{_sp_th}color:#e2e8f0;text-align:left;">사용 탭</th>'
+            '</tr>'
+            # 1970~1987
+            '<tr style="background:#0d1117;">'
+            f'<td style="{_sp_td}color:#FFD700;font-weight:700;">1970 ~ 1987</td>'
+            f'<td style="{_sp_td}text-align:center;color:#e2e8f0;">yfinance<br>+ multpl.com</td>'
+            f'<td style="{_sp_td}text-align:center;color:#00FF66;font-weight:700;">^GSPC</td>'
+            f'<td style="{_sp_td}text-align:center;font-size:16px;">✅</td>'
+            f'<td style="{_sp_td}color:#e2e8f0;">multpl.com 배당수익률(%) ÷ 100 ÷ 252<br>'
+            f'<span style="color:#FF9100;font-size:11px;">※ 월별 배당수익률을 일별 균등 분배 (근사치)</span></td>'
+            f'<td style="{_sp_td}color:#fbbf24;">sp500/sp500_history.csv<br>sp500/sp500_div_yield.csv</td>'
+            f'<td style="{_sp_td}color:#e2e8f0;">전체</td>'
+            '</tr>'
+            # 1988~현재
+            '<tr style="background:#111827;">'
+            f'<td style="{_sp_td}color:#FFD700;font-weight:700;">1988 ~ 현재</td>'
+            f'<td style="{_sp_td}text-align:center;color:#e2e8f0;">yfinance</td>'
+            f'<td style="{_sp_td}text-align:center;color:#00FF66;font-weight:700;">^SP500TR</td>'
+            f'<td style="{_sp_td}text-align:center;font-size:16px;">✅</td>'
+            f'<td style="{_sp_td}color:#e2e8f0;">배당재투자 지수 (지수 자체가 TR)<br>'
+            f'<span style="color:#00FF66;font-size:11px;">※ 실제 배당 재투자 시점 반영 — 정확</span></td>'
+            f'<td style="{_sp_td}color:#fbbf24;">sp500/sp500tr_history.csv</td>'
+            f'<td style="{_sp_td}color:#e2e8f0;">전체</td>'
+            '</tr>'
+            '</table>'
+        )
+        st.markdown(_sp_tbl, unsafe_allow_html=True)
+        st.markdown(
+            '<div style="color:#ffffff;font-size:11px;margin:6px 0 20px 4px;">'
+            '* 트레일링 스탑 기준 가격은 배당 미포함 ^GSPC 원시 가격 사용 (sp500/sp500_history.csv)'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
         # ── CSV 기반 데이터 정의 ──
         _csv_data = [
             {
-                "key": "sp500",        "name": "S&P500",
+                "key": "sp500",        "name": "S&P500 (가격)",
                 "csv": "sp500/sp500_history.csv",
                 "yf_ticker": "^GSPC",
                 "source": "yfinance (^GSPC)",
-                "note": "로컬 CSV(1970~) + yfinance 최신 보완",
-                "usage": "자산배분, 역대폭락일, 시장사이클 등 전체",
+                "note": "로컬 CSV(1970~) + yfinance 최신 보완 | 트레일링 스탑 기준 가격",
+                "usage": "전체 (가격 기준) + 전략 수익률 계산",
+            },
+            {
+                "key": "sp500_tr",     "name": "S&P500 TR (총수익)",
+                "csv": "sp500/sp500tr_history.csv",
+                "yf_ticker": "^SP500TR",
+                "source": "yfinance (^SP500TR)",
+                "note": "1988~ | 배당재투자 포함 TR 지수",
+                "usage": "전체 (수익률 계산)",
+            },
+            {
+                "key": "sp500_div",    "name": "S&P500 배당수익률",
+                "csv": "sp500/sp500_div_yield.csv",
+                "yf_ticker": "-",
+                "source": "multpl.com",
+                "note": "1871~ 월별 연환산 배당수익률(%) | 1970~1987 배당 산출용",
+                "usage": "전체 (1970~1987 배당 계산)",
             },
             {
                 "key": "nasdaq",       "name": "NASDAQ",
