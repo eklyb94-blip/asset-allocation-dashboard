@@ -5214,18 +5214,18 @@ def main():
 
         # ── 성과 카드 ──
         _tm_cols = st.columns(4)
-        for _col, (nm, s, clr) in zip(_tm_cols, _strats):
+        for _col, (nm, s, _clr) in zip(_tm_cols, _strats):
             cum, cagr, mdd = _tm_stats(s)
             with _col:
                 st.markdown(
-                    f'''<div style="background:#0d1117;border:2px solid {clr};border-radius:10px;
+                    f'''<div style="background:#0d1117;border:2px solid {_clr};border-radius:10px;
                     padding:16px;text-align:center;margin-bottom:4px;">
-                    <div style="color:{clr};font-size:12px;font-weight:800;margin-bottom:6px;">{nm}</div>
+                    <div style="color:{_clr};font-size:12px;font-weight:800;margin-bottom:6px;">{nm}</div>
                     <div style="color:#ffffff;font-size:24px;font-weight:900;">{cum:+.1f}%</div>
                     <div style="display:flex;justify-content:space-around;margin-top:10px;">
                       <div>
                         <div style="color:#94a3b8;font-size:10px;">CAGR</div>
-                        <div style="color:{clr};font-size:15px;font-weight:700;">{cagr:+.2f}%</div>
+                        <div style="color:{_clr};font-size:15px;font-weight:700;">{cagr:+.2f}%</div>
                       </div>
                       <div>
                         <div style="color:#94a3b8;font-size:10px;">MDD</div>
@@ -5240,10 +5240,10 @@ def main():
         # ── 차트 (로그 스케일) ──
         import plotly.graph_objects as go
         _fig_tm = go.Figure()
-        for nm, s, clr in _strats:
+        for nm, s, _clr in _strats:
             _fig_tm.add_trace(go.Scatter(
                 x=s.index, y=s.values, name=nm,
-                line=dict(color=clr, width=2),
+                line=dict(color=_clr, width=2),
                 hovertemplate="%{x|%Y-%m-%d}<br>%{y:.1f}<extra>" + nm + "</extra>"
             ))
         _fig_tm.update_layout(
@@ -5284,15 +5284,15 @@ def main():
         _th_style = "padding:9px 14px;text-align:center;font-size:12px;"
         _tbl = '<table style="width:100%;border-collapse:collapse;font-size:13px;">' + '<tr style="background:#1e3a5f;">'
         _tbl += f'<th style="{_th_style}text-align:left;color:#e2e8f0;">구간</th>'
-        for nm, _, clr in _strats:
-            _tbl += f'<th style="{_th_style}color:{clr};">{nm}</th>'
+        for nm, _, _clr in _strats:
+            _tbl += f'<th style="{_th_style}color:{_clr};">{nm}</th>'
         _tbl += '</tr>'
 
         for i, (name, s, e) in enumerate(_crashes):
             bg = "#0d1117" if i % 2 == 0 else "#111827"
             _tbl += f'<tr style="background:{bg};">'
             _tbl += f'<td style="padding:8px 14px;color:#e2e8f0;font-weight:600;">{name}</td>'
-            for _, series, _ in _strats:
+            for _, series, __ in _strats:
                 v = _period_mdd(series, s, e)
                 if v is None:
                     _tbl += '<td style="padding:8px 14px;text-align:center;color:#64748b;">-</td>'
