@@ -5205,7 +5205,12 @@ def main():
                 if _mpx_v <= _mtr: _mtr = _mpx_v
                 if _mpx_v >= _mtr * 1.05: _ms = "normal"; _mpk = _mtr = _mpx_v
             _m_states[_mdt] = _ms
-        _m_state_s = pd.Series(_m_states).reindex(_common, method='ffill').fillna("normal")
+        # shift(1): 월말 감지 → 다음 거래일부터 적용 (당일 종가 감지, 익일 리밸런싱)
+        _m_state_s = (pd.Series(_m_states)
+                      .reindex(_common, method='ffill')
+                      .fillna("normal")
+                      .shift(1)
+                      .fillna("normal"))
 
         # ── 수수료 입력 + 데이터 출처 ──
         _fee_col, _info_col = st.columns([1, 3])
@@ -5250,8 +5255,10 @@ def main():
         _FEE = _fee_input / 100.0
         v_bh = 100.0; v_s6 = 100.0; v_d = 100.0; v_m = 100.0
         l_bh = [];    l_s6 = [];    l_d = [];    l_m = []
+        # _dst: 오늘 종가 기준으로 감지한 상태 (내일 적용)
+        # _deff: 어제 감지된 상태 (오늘 실제 적용)
         _dst = "normal"; _dpk = float(_px.iloc[0]); _dtr = float(_px.iloc[0])
-        _dprev = "normal"; _mprev = "normal"
+        _deff = "normal"; _dprev = "normal"; _mprev = "normal"
 
         for dt in _common:
             rs = float(_rs[dt]); rg = float(_rg[dt]); rb = float(_rb[dt])
@@ -5265,21 +5272,22 @@ def main():
             # ② 전략6 (트레일링 스탑 없음)
             v_s6 *= (1 + ws*rs + 0.25*rg + 0.25*rb); l_s6.append(v_s6)
 
-            # ③ 전략6+ 일별 스탑
-            if _dst == "normal":
+            # ③ 전략6+ 일별 스탑 (당일 종가 감지 → 익일 종가 리밸런싱)
+            _deff = _dst                          # 어제 감지한 상태를 오늘 적용
+            if _dst == "normal":                  # 오늘 종가로 내일 상태 결정
                 if px >= _dpk: _dpk = px
                 if px <= _dpk * 0.85: _dst = "bear"; _dtr = px
             else:
                 if px <= _dtr: _dtr = px
                 if px >= _dtr * 1.05: _dst = "normal"; _dpk = _dtr = px
-            _dcost = ws * _FEE if _dst != _dprev else 0.0; _dprev = _dst
-            if _dst == "bear":
+            _dcost = ws * _FEE if _deff != _dprev else 0.0; _dprev = _deff
+            if _deff == "bear":
                 _r = (0.25 + ws/3)*rg + (0.25 + ws/3)*rb - _dcost
             else:
                 _r = ws*rs + 0.25*rg + 0.25*rb
             v_d *= (1 + _r); l_d.append(v_d)
 
-            # ④ 전략6+ 월별 스탑
+            # ④ 전략6+ 월별 스탑 (월말 종가 감지 → 익일 종가 리밸런싱, shift(1) 적용됨)
             _mst = _m_state_s[dt]
             _mcost = ws * _FEE if _mst != _mprev else 0.0; _mprev = _mst
             if _mst == "bear":
