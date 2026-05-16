@@ -54,9 +54,9 @@ for f in files_to_copy:
 # 2. 장기 히스토리 CSV 백업 (STOOQ 기반)
 # ════════════════════════════════════════════════════════
 history_csvs = [
-    "sp500_history.csv",
-    "sp500tr_history.csv",      # ^SP500TR 총수익지수 (배당재투자, 1988~)
-    "sp500_div_yield.csv",      # S&P500 배당수익률 월별 (multpl.com, 1871~)
+    "sp500/sp500_history.csv",      # ^GSPC 가격 (1970~)
+    "sp500/sp500tr_history.csv",    # ^SP500TR 총수익지수 (배당재투자, 1988~)
+    "sp500/sp500_div_yield.csv",    # S&P500 배당수익률 월별 (multpl.com, 1871~)
     "nasdaq_history.csv",
     "dow_history.csv",
     "gold_history.csv",
@@ -66,8 +66,10 @@ history_csvs = [
 log("\n📂 히스토리 CSV 복사")
 for fname in history_csvs:
     src = BASE_DIR / fname
+    dst = DEST / fname
     if src.exists():
-        shutil.copy2(src, DEST / fname)
+        dst.parent.mkdir(parents=True, exist_ok=True)  # 서브폴더 자동 생성
+        shutil.copy2(src, dst)
         size_kb = src.stat().st_size / 1024
         log(f"  ✅ {fname}  ({size_kb:.0f} KB)")
     else:

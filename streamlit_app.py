@@ -230,7 +230,7 @@ def load_raw():
     for key, (ticker, start, csv_name) in _ticker_map.items():
         results[key], offline_flags[key] = dl(ticker, start, csv_name)
     results["kospi"],  offline_flags["kospi"]  = load_kospi()
-    results["sp500"],  offline_flags["sp500"]  = load_from_csv("sp500_history.csv",  "^GSPC",  "1970-01-01", "SP500")
+    results["sp500"],  offline_flags["sp500"]  = load_from_csv("sp500/sp500_history.csv",  "^GSPC",  "1970-01-01", "SP500")
     results["gold"],   offline_flags["gold"]   = load_from_csv("gold_history.csv",   "GC=F",   "1970-01-01", "GOLD")
     results["nasdaq"], offline_flags["nasdaq"] = load_from_csv("nasdaq_history.csv", "^IXIC",  "1970-01-01", "NASDAQ")
     results["dow"],    offline_flags["dow"]    = load_from_csv("dow_history.csv",    "^DJI",   "1970-01-01", "DOW")
@@ -292,7 +292,7 @@ def load_sp500_div_yield():
     """S&P500 배당수익률 월별 시계열 — 연환산 %(%)
     우선순위: 로컬 sp500_div_yield.csv → multpl.com 실시간 다운로드 후 CSV 저장
     """
-    _csv = pathlib.Path(__file__).parent / "sp500_div_yield.csv"
+    _csv = pathlib.Path(__file__).parent / "sp500" / "sp500_div_yield.csv"
 
     def _from_web():
         try:
@@ -351,7 +351,7 @@ def load_sp500tr():
     """S&P500 Total Return Index (^SP500TR) — 배당 재투자 포함, 1988~
     우선순위: 로컬 sp500tr_history.csv → yfinance 실시간 다운로드 후 CSV 저장
     """
-    _csv = pathlib.Path(__file__).parent / "sp500tr_history.csv"
+    _csv = pathlib.Path(__file__).parent / "sp500" / "sp500tr_history.csv"
 
     def _from_web():
         try:
@@ -482,7 +482,7 @@ def load_daily_ohlc():
 
     # CSV 기반 1970~ 로드
     csv_sources = {
-        "sp500":  ("sp500_history.csv",  "^GSPC"),
+        "sp500":  ("sp500/sp500_history.csv",  "^GSPC"),
         "nasdaq": ("nasdaq_history.csv", "^IXIC"),
         "dow":    ("dow_history.csv",    "^DJI"),
         "csi300": ("csi300_history.csv", "000300.SS"),
@@ -5668,7 +5668,7 @@ def main():
         _csv_data = [
             {
                 "key": "sp500",        "name": "S&P500",
-                "csv": "sp500_history.csv",
+                "csv": "sp500/sp500_history.csv",
                 "yf_ticker": "^GSPC",
                 "source": "yfinance (^GSPC)",
                 "note": "로컬 CSV(1970~) + yfinance 최신 보완",
