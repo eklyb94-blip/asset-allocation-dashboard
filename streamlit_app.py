@@ -1178,8 +1178,8 @@ def main():
                 return {}
             bond_key = "krbond" if key in ("kospi", "kosdaq") else "us30y"
 
-            # 일별 수익률
-            d_stk  = raw[key].pct_change().dropna()
+            # 일별 수익률 (sp500은 배당 포함 TR 사용)
+            d_stk  = raw.get(f"{key}_tr", raw[key]).pct_change().dropna()
             d_gold = raw["gold"].pct_change().dropna()
             d_bond = (-DURATION_US * raw["us30y"].diff() / 100).dropna() \
                      if bond_key == "us30y" else raw["krbond"].pct_change().dropna()
