@@ -5238,7 +5238,6 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ── 차트 (로그 스케일) ──
-        import plotly.graph_objects as go
         _fig_tm = go.Figure()
         for nm, s, _clr in _strats:
             _fig_tm.add_trace(go.Scatter(
