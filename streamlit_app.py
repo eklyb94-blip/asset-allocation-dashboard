@@ -873,7 +873,7 @@ def main():
     # ════════════════════════════════════════
     # 최상위 탭
     # ════════════════════════════════════════
-    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴"])
+    main_tab0, main_tab1, main_tab2, main_tab3, main_tab4, main_tab5, main_tab6, main_tab7, main_tab8 = st.tabs(["💡 실사용 전략", "📊 자산배분", "📉 역대 폭락일", "🔍 폭락 후 전략", "📈 시장 사이클", "📡 저점 레이더", "📅 연간 수익률", "⚡ 급락 패턴", "🧪 테스트모드"])
 
     # ════════════════════════════════════════
     # TAB 1: 자산배분
@@ -5094,6 +5094,222 @@ def main():
                 # 월별 수익률 히트맵
                 st.markdown("#### 📅 월별 수익률 히트맵 (전략8)")
                 st.markdown(_monthly_heatmap_html(s8_h), unsafe_allow_html=True)
+
+
+    # ════════════════════════════════════════════════════════
+    # TAB 8: 🧪 테스트모드
+    # ════════════════════════════════════════════════════════
+    with main_tab8:
+        st.markdown('<div class="section-title">🧪 테스트모드 — 전략 비교 (S&P500 1970~)</div>', unsafe_allow_html=True)
+
+        # ── 데이터 준비 ──
+        _d_sp = raw["sp500"].copy()
+        _d_sp.index = pd.to_datetime(_d_sp.index).tz_localize(None)
+        _d_sp = _d_sp.dropna().sort_index()
+
+        _d_gold = raw["gold"].copy()
+        _d_gold.index = pd.to_datetime(_d_gold.index).tz_localize(None)
+        _d_gold = _d_gold.dropna().sort_index()
+
+        _d_yield = raw["us30y"].copy()
+        _d_yield.index = pd.to_datetime(_d_yield.index).tz_localize(None)
+        _d_yield = _d_yield.dropna().sort_index()
+
+        _rs = _d_sp.pct_change().dropna()
+        _rg = _d_gold.pct_change().dropna()
+        _rb = (-DURATION_US * _d_yield.diff() / 100).dropna()
+        _common = _rs.index.intersection(_rg.index).intersection(_rb.index)
+        _rs = _rs.reindex(_common)
+        _rg = _rg.reindex(_common)
+        _rb = _rb.reindex(_common)
+        _px = _d_sp.reindex(_common).ffill()
+
+        # 투자시즌 (기존 strategies 재사용)
+        _inv_na = strategies["sp500"]["inv_na"]
+        _inv_mo = strategies["sp500"]["inv_mo"]
+
+        def _tm_is_inv(dt):
+            m, y = dt.month, dt.year
+            if m in [11, 12]:    sn, sy = "Nov-Apr", y
+            elif m in [1,2,3,4]: sn, sy = "Nov-Apr", y - 1
+            else:                sn, sy = "May-Oct",  y
+            return (sy % 10) in (_inv_na if sn == "Nov-Apr" else _inv_mo)
+
+        # 월별 스탑 상태 사전 계산 (월말 종가 기준)
+        _sp_m_px = _d_sp.resample("ME").last()
+        _ms = "normal"; _mpk = float(_sp_m_px.iloc[0]); _mtr = float(_sp_m_px.iloc[0])
+        _m_states = {}
+        for _mdt, _mpx_v in _sp_m_px.items():
+            _mpx_v = float(_mpx_v)
+            if _ms == "normal":
+                if _mpx_v >= _mpk: _mpk = _mpx_v
+                if _mpx_v <= _mpk * 0.85: _ms = "bear"; _mtr = _mpx_v
+            else:
+                if _mpx_v <= _mtr: _mtr = _mpx_v
+                if _mpx_v >= _mtr * 1.05: _ms = "normal"; _mpk = _mtr = _mpx_v
+            _m_states[_mdt] = _ms
+        _m_state_s = pd.Series(_m_states).reindex(_common, method='ffill').fillna("normal")
+
+        # ── 4개 전략 계산 (일별 포트폴리오) ──
+        _FEE = 0.0035
+        v_bh = 100.0; v_s6 = 100.0; v_d = 100.0; v_m = 100.0
+        l_bh = [];    l_s6 = [];    l_d = [];    l_m = []
+        _dst = "normal"; _dpk = float(_px.iloc[0]); _dtr = float(_px.iloc[0])
+        _dprev = "normal"; _mprev = "normal"
+
+        for dt in _common:
+            rs = float(_rs[dt]); rg = float(_rg[dt]); rb = float(_rb[dt])
+            px = float(_px[dt])
+            inv = _tm_is_inv(dt)
+            ws  = 0.50 if inv else 0.25
+
+            # ① S&P500 BH
+            v_bh *= (1 + rs); l_bh.append(v_bh)
+
+            # ② 전략6 (트레일링 스탑 없음)
+            v_s6 *= (1 + ws*rs + 0.25*rg + 0.25*rb); l_s6.append(v_s6)
+
+            # ③ 전략6+ 일별 스탑
+            if _dst == "normal":
+                if px >= _dpk: _dpk = px
+                if px <= _dpk * 0.85: _dst = "bear"; _dtr = px
+            else:
+                if px <= _dtr: _dtr = px
+                if px >= _dtr * 1.05: _dst = "normal"; _dpk = _dtr = px
+            _dcost = ws * _FEE if _dst != _dprev else 0.0; _dprev = _dst
+            if _dst == "bear":
+                _r = (0.25 + ws/3)*rg + (0.25 + ws/3)*rb - _dcost
+            else:
+                _r = ws*rs + 0.25*rg + 0.25*rb
+            v_d *= (1 + _r); l_d.append(v_d)
+
+            # ④ 전략6+ 월별 스탑
+            _mst = _m_state_s[dt]
+            _mcost = ws * _FEE if _mst != _mprev else 0.0; _mprev = _mst
+            if _mst == "bear":
+                _r = (0.25 + ws/3)*rg + (0.25 + ws/3)*rb - _mcost
+            else:
+                _r = ws*rs + 0.25*rg + 0.25*rb
+            v_m *= (1 + _r); l_m.append(v_m)
+
+        s_bh = pd.Series(l_bh, index=_common)
+        s_s6 = pd.Series(l_s6, index=_common)
+        s_d  = pd.Series(l_d,  index=_common)
+        s_m  = pd.Series(l_m,  index=_common)
+
+        # ── 성과 계산 ──
+        def _tm_stats(s):
+            n    = (s.index[-1] - s.index[0]).days / 365.25
+            cum  = (s.iloc[-1] / s.iloc[0] - 1) * 100
+            cagr = ((s.iloc[-1] / s.iloc[0]) ** (1/n) - 1) * 100 if n > 0 else 0
+            mdd  = ((s - s.cummax()) / s.cummax()).min() * 100
+            return round(cum, 1), round(cagr, 2), round(mdd, 2)
+
+        _strats = [
+            ("📈 S&P500 BH",         s_bh, "#6366f1"),
+            ("⚙️ 전략6",             s_s6, "#34d399"),
+            ("🚀 전략6+ (일별스탑)",  s_d,  "#f59e0b"),
+            ("🌙 전략6+ (월별스탑)",  s_m,  "#38bdf8"),
+        ]
+
+        # ── 성과 카드 ──
+        _tm_cols = st.columns(4)
+        for _col, (nm, s, clr) in zip(_tm_cols, _strats):
+            cum, cagr, mdd = _tm_stats(s)
+            with _col:
+                st.markdown(
+                    f'''<div style="background:#0d1117;border:2px solid {clr};border-radius:10px;
+                    padding:16px;text-align:center;margin-bottom:4px;">
+                    <div style="color:{clr};font-size:12px;font-weight:800;margin-bottom:6px;">{nm}</div>
+                    <div style="color:#ffffff;font-size:24px;font-weight:900;">{cum:+.1f}%</div>
+                    <div style="display:flex;justify-content:space-around;margin-top:10px;">
+                      <div>
+                        <div style="color:#94a3b8;font-size:10px;">CAGR</div>
+                        <div style="color:{clr};font-size:15px;font-weight:700;">{cagr:+.2f}%</div>
+                      </div>
+                      <div>
+                        <div style="color:#94a3b8;font-size:10px;">MDD</div>
+                        <div style="color:#f87171;font-size:15px;font-weight:700;">{mdd:.1f}%</div>
+                      </div>
+                    </div></div>''',
+                    unsafe_allow_html=True
+                )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── 차트 (로그 스케일) ──
+        import plotly.graph_objects as go
+        _fig_tm = go.Figure()
+        for nm, s, clr in _strats:
+            _fig_tm.add_trace(go.Scatter(
+                x=s.index, y=s.values, name=nm,
+                line=dict(color=clr, width=2),
+                hovertemplate="%{x|%Y-%m-%d}<br>%{y:.1f}<extra>" + nm + "</extra>"
+            ))
+        _fig_tm.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+            height=430, margin=dict(l=10, r=10, t=40, b=10),
+            yaxis=dict(type="log", title="포트폴리오 가치 (로그, 시작=100)", gridcolor="#1e293b"),
+            xaxis=dict(title="", gridcolor="#1e293b"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                        font=dict(size=12)),
+            hovermode="x unified",
+        )
+        st.plotly_chart(_fig_tm, use_container_width=True)
+
+        # ── 역사적 하락장별 최대낙폭 표 ──
+        st.markdown(
+            '<div style="color:#e2e8f0;font-size:14px;font-weight:700;margin:8px 0 10px;">' +
+            '📉 역사적 하락장별 최대낙폭 (해당 구간 내 고점 대비)</div>',
+            unsafe_allow_html=True
+        )
+
+        _crashes = [
+            ("1973~74  오일쇼크+스태그플레이션", "1973-01-01", "1975-06-30"),
+            ("1987      블랙먼데이",              "1987-01-01", "1988-06-30"),
+            ("2000~02  닷컴버블 붕괴",            "2000-01-01", "2002-12-31"),
+            ("2007~09  리먼사태",                 "2007-01-01", "2009-12-31"),
+            ("2020      코로나",                  "2020-01-01", "2020-12-31"),
+            ("2022      인플레이션·금리급등",      "2022-01-01", "2022-12-31"),
+        ]
+
+        def _period_mdd(s, start, end):
+            sub = s[(s.index >= start) & (s.index <= end)]
+            if len(sub) < 2: return None
+            rm = sub.expanding().max()
+            return round(float(((sub - rm) / rm).min() * 100), 1)
+
+        # 헤더
+        _th_style = "padding:9px 14px;text-align:center;font-size:12px;"
+        _tbl = '<table style="width:100%;border-collapse:collapse;font-size:13px;">' + '<tr style="background:#1e3a5f;">'
+        _tbl += f'<th style="{_th_style}text-align:left;color:#e2e8f0;">구간</th>'
+        for nm, _, clr in _strats:
+            _tbl += f'<th style="{_th_style}color:{clr};">{nm}</th>'
+        _tbl += '</tr>'
+
+        for i, (name, s, e) in enumerate(_crashes):
+            bg = "#0d1117" if i % 2 == 0 else "#111827"
+            _tbl += f'<tr style="background:{bg};">'
+            _tbl += f'<td style="padding:8px 14px;color:#e2e8f0;font-weight:600;">{name}</td>'
+            for _, series, _ in _strats:
+                v = _period_mdd(series, s, e)
+                if v is None:
+                    _tbl += '<td style="padding:8px 14px;text-align:center;color:#64748b;">-</td>'
+                else:
+                    vc = "#f87171" if v < -30 else "#fbbf24" if v < -15 else "#86efac"
+                    _tbl += (f'<td style="padding:8px 14px;text-align:center;'
+                             f'color:{vc};font-weight:700;">{v:+.1f}%</td>')
+            _tbl += '</tr>'
+        _tbl += '</table>'
+        st.markdown(_tbl, unsafe_allow_html=True)
+
+        st.markdown(
+            '<div style="color:#475569;font-size:11px;margin-top:8px;">' +
+            '* 포트폴리오 구성: 주식(전략6비중) + 금25% + 미국채25% | 손절 -15% / 복귀 +5% | 수수료 0.35% 편도' +
+            '</div>',
+            unsafe_allow_html=True
+        )
 
 
 if __name__ == "__main__":

@@ -35,7 +35,9 @@
 ▶ 끝자리별 투자시즌 집합 (과거 1970~2025, 양수확률 60% 이상 기준)
 """
 
-from datetime import date
+import json
+import pathlib
+from datetime import date, timedelta
 
 # ─────────────────────────────────────────────
 # 투자시즌 끝자리 집합 (백테스트 기반 고정값)
@@ -174,6 +176,190 @@ def next_rebalance_date(today=None):
 # ─────────────────────────────────────────────
 # 단독 실행 시 현재 신호 출력
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# 전략8+ 트레일링 스탑
+# ─────────────────────────────────────────────
+TRAIL_STATE_FILE = pathlib.Path(__file__).parent / "trail_state.json"
+
+TRAIL_TICKERS = {
+    "sp500":  "^GSPC",
+    "nasdaq": "^IXIC",
+    "kospi":  "^KS11",
+    "kosdaq": "^KQ11",
+    "csi300": "000300.SS",
+}
+
+_TRAIL_ASSETS  = ["sp500", "nasdaq", "kospi", "kosdaq", "csi300"]
+_STOP_PCT      = 0.15   # rolling 고점 대비 -15% → 손절
+_RESUME_PCT    = 0.05   # rolling 저점 대비 +5%  → 복귀
+_SAFE_ASSETS   = ["gold", "kr10y", "us10y"]   # 손절 비중 1/3씩 배분
+
+
+def load_trail_state() -> dict:
+    if TRAIL_STATE_FILE.exists():
+        try:
+            return json.loads(TRAIL_STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {k: {"state": "normal", "peak": 0.0, "trough": 0.0}
+            for k in _TRAIL_ASSETS}
+
+
+def save_trail_state(state: dict):
+    out = {k: v for k, v in state.items()}
+    out["last_updated"] = date.today().isoformat()
+    TRAIL_STATE_FILE.write_text(
+        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _fetch_prices_yf() -> dict:
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {}
+    prices = {}
+    for asset, ticker in TRAIL_TICKERS.items():
+        try:
+            df = yf.download(ticker, period="5d", auto_adjust=True,
+                             progress=False, multi_level_index=False)
+            if not df.empty:
+                prices[asset] = float(df["Close"].dropna().iloc[-1])
+        except Exception:
+            pass
+    return prices
+
+
+def _apply_one_price(s: dict, price: float) -> dict:
+    """상태 dict에 가격 하나를 적용해 peak/trough/state 갱신 후 반환."""
+    if s["state"] == "normal":
+        if s["peak"] <= 0:
+            s["peak"] = price
+        elif price > s["peak"]:
+            s["peak"] = price
+        if s["peak"] > 0 and price < s["peak"] * (1 - _STOP_PCT):
+            s["state"]  = "bear"
+            s["trough"] = price
+    else:  # bear
+        if s["trough"] <= 0 or price < s["trough"]:
+            s["trough"] = price
+        if s["trough"] > 0 and price > s["trough"] * (1 + _RESUME_PCT):
+            s["state"]  = "normal"
+            s["peak"]   = price
+            s["trough"] = price
+    return s
+
+
+def init_trail_state(start_date: str = "2020-01-01") -> dict:
+    """최초 1회 — start_date부터 오늘까지 전체 히스토리로 rolling 상태 계산 후 저장."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {}
+
+    state = {k: {"state": "normal", "peak": 0.0, "trough": 0.0}
+             for k in _TRAIL_ASSETS}
+
+    for asset, ticker in TRAIL_TICKERS.items():
+        try:
+            df = yf.download(ticker, start=start_date, auto_adjust=True,
+                             progress=False, multi_level_index=False)
+            if df.empty:
+                continue
+            s = {"state": "normal", "peak": 0.0, "trough": 0.0}
+            for price in df["Close"].dropna():
+                s = _apply_one_price(s, float(price))
+            state[asset] = s
+        except Exception:
+            pass
+
+    save_trail_state(state)
+    return state
+
+
+def catchup_trail_state() -> dict:
+    """프로그램 시작 시 — last_updated 이후 누락된 거래일 데이터를 일괄 반영."""
+    state = load_trail_state()
+    last_str = state.get("last_updated", "")
+
+    if not last_str:
+        return init_trail_state()
+
+    try:
+        last_date = date.fromisoformat(last_str)
+    except ValueError:
+        return init_trail_state()
+
+    if (date.today() - last_date).days <= 1:
+        return state  # 최신 상태 — 갱신 불필요
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        return state
+
+    start = (last_date + timedelta(days=1)).isoformat()
+    for asset, ticker in TRAIL_TICKERS.items():
+        try:
+            df = yf.download(ticker, start=start, auto_adjust=True,
+                             progress=False, multi_level_index=False)
+            if df.empty:
+                continue
+            s = state.get(asset, {"state": "normal", "peak": 0.0, "trough": 0.0})
+            for price in df["Close"].dropna():
+                s = _apply_one_price(s, float(price))
+            state[asset] = s
+        except Exception:
+            pass
+
+    save_trail_state(state)
+    return state
+
+
+def update_trail_state(prices: dict = None) -> dict:
+    """매일 장 마감 후 — 오늘 종가 1개로 상태 갱신 후 저장.
+    prices가 None이면 yfinance 자동 조회."""
+    if prices is None:
+        prices = _fetch_prices_yf()
+
+    state = load_trail_state()
+
+    for asset in _TRAIL_ASSETS:
+        price = prices.get(asset)
+        if not price or price <= 0:
+            continue
+        s = state.get(asset, {"state": "normal", "peak": 0.0, "trough": 0.0})
+        state[asset] = _apply_one_price(s, price)
+
+    save_trail_state(state)
+    return state
+
+
+def get_signal_plus(today=None) -> dict:
+    """전략8 + trailing stop 반영 비중 반환."""
+    sig     = get_signal(today)
+    weights = dict(sig["weights"])
+    state   = load_trail_state()
+
+    for asset in _TRAIL_ASSETS:
+        if state.get(asset, {}).get("state") != "bear":
+            continue
+        code = ETF_TICKERS.get(asset)
+        if not code or weights.get(code, 0.0) == 0.0:
+            continue
+        freed = weights[code]
+        weights[code] = 0.0
+        per_safe = freed / len(_SAFE_ASSETS)
+        for safe in _SAFE_ASSETS:
+            safe_code = ETF_TICKERS.get(safe)
+            if safe_code:
+                weights[safe_code] = round(weights.get(safe_code, 0.0) + per_safe, 6)
+
+    result = dict(sig)
+    result["weights"]     = weights
+    result["trail_state"] = state
+    return result
+
+
 if __name__ == "__main__":
     sig = get_signal()
     nxt = next_rebalance_date()
