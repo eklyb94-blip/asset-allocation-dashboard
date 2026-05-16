@@ -5173,17 +5173,17 @@ def main():
             st.markdown(
                 f'<div style="background:#0d1117;border:1px solid #1e293b;border-radius:8px;'
                 f'padding:10px 16px;margin-top:4px;">'
-                f'<span style="color:#64748b;font-size:11px;">사용 데이터 &nbsp;|&nbsp; </span>'
-                f'<span style="color:#00FF66;font-size:11px;font-weight:700;">S&P500</span>'
-                f'<span style="color:#64748b;font-size:11px;"> yfinance ^GSPC &nbsp;·&nbsp; </span>'
-                f'<span style="color:#FFD700;font-size:11px;font-weight:700;">금</span>'
-                f'<span style="color:#64748b;font-size:11px;"> yfinance GC=F &nbsp;·&nbsp; </span>'
-                f'<span style="color:#00E5FF;font-size:11px;font-weight:700;">미국채 10년물</span>'
-                f'<span style="color:#64748b;font-size:11px;"> {_bond_src}</span>'
+                f'<span style="color:#ffffff;font-size:14px;">사용 데이터 &nbsp;|&nbsp; </span>'
+                f'<span style="color:#00FF66;font-size:14px;font-weight:700;">S&P500</span>'
+                f'<span style="color:#ffffff;font-size:14px;"> yfinance ^GSPC &nbsp;·&nbsp; </span>'
+                f'<span style="color:#FFD700;font-size:14px;font-weight:700;">금</span>'
+                f'<span style="color:#ffffff;font-size:14px;"> yfinance GC=F &nbsp;·&nbsp; </span>'
+                f'<span style="color:#00E5FF;font-size:14px;font-weight:700;">미국채 10년물</span>'
+                f'<span style="color:#ffffff;font-size:14px;"> {_bond_src}</span>'
                 f'<br>'
-                f'<span style="color:#64748b;font-size:11px;">분석 기간 &nbsp;|&nbsp; </span>'
-                f'<span style="color:#ffffff;font-size:11px;font-weight:700;">{_c_start} ~ {_c_end}</span>'
-                f'<span style="color:#64748b;font-size:11px;"> &nbsp;({len(_common):,}거래일)</span>'
+                f'<span style="color:#ffffff;font-size:14px;">분석 기간 &nbsp;|&nbsp; </span>'
+                f'<span style="color:#ffffff;font-size:14px;font-weight:700;">{_c_start} ~ {_c_end}</span>'
+                f'<span style="color:#ffffff;font-size:14px;"> &nbsp;({len(_common):,}거래일)</span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
