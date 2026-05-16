@@ -237,6 +237,36 @@ def load_raw():
     results["csi300"], offline_flags["csi300"] = load_from_csv("csi300_history.csv", "000300.SS", "2005-01-01", "CSI300")
     results["us30y"],  offline_flags["us30y"]  = load_us30y()
 
+    # ── S&P500 총수익(TR) 가격지수 빌드 ──
+    # 1970~1987: ^GSPC 가격변동 + multpl.com 배당수익률/252
+    # 1988~현재: ^SP500TR (배당재투자 지수)
+    try:
+        _sp = results["sp500"].copy()
+        _sp.index = pd.to_datetime(_sp.index).tz_localize(None)
+        _sp = _sp.dropna().sort_index()
+        _rs_g = _sp.pct_change().dropna()
+
+        _div_m = load_sp500_div_yield()
+        if not _div_m.empty:
+            _div_d = (_div_m / 100 / 252).reindex(_rs_g.index, method="ffill").fillna(0)
+            _rs_g_tr = _rs_g + _div_d
+        else:
+            _rs_g_tr = _rs_g
+
+        _sp_tr = load_sp500tr()
+        if not _sp_tr.empty:
+            _rs_tr = _sp_tr.pct_change().dropna()
+            _rs_combined = _rs_g_tr.copy()
+            _tr_idx = _rs_tr.index.intersection(_rs_g_tr.index)
+            _rs_combined[_tr_idx] = _rs_tr[_tr_idx]
+        else:
+            _rs_combined = _rs_g_tr
+
+        results["sp500_tr"] = (1 + _rs_combined).cumprod() * 100
+    except Exception:
+        results["sp500_tr"] = results["sp500"].copy()
+    offline_flags["sp500_tr"] = offline_flags["sp500"]
+
     # 오프라인 여부를 session_state에 기록 (UI 배너용)
     is_offline = any(offline_flags.values())
     latest     = _latest_backup_dir()
@@ -541,7 +571,7 @@ def compute_strategy():
         return (-DURATION_US * m.diff() / 100).dropna()
 
     monthly = {
-        "sp500":  mr(raw["sp500"]),
+        "sp500":  mr(raw.get("sp500_tr", raw["sp500"])),  # TR 수익률 (배당 포함)
         "nasdaq": mr(raw["nasdaq"]),
         "kospi":  mr(raw["kospi"]),
         "dow":    mr(raw["dow"]),
@@ -1252,7 +1282,7 @@ def main():
             if sim_s8.empty:
                 return {}
 
-            d_sp  = raw["sp500"].pct_change().dropna()
+            d_sp  = raw.get("sp500_tr", raw["sp500"]).pct_change().dropna()  # TR 수익률 (배당 포함)
             d_nq  = raw["nasdaq"].pct_change().dropna()
             d_ko  = raw["kospi"].pct_change().dropna()
             d_kq  = raw["kosdaq"].pct_change().dropna()
@@ -5207,42 +5237,26 @@ def main():
         st.markdown('<div class="section-title">🧪 테스트모드 — 전략 비교 (S&P500 1970~ | 배당·쿠폰 포함)</div>', unsafe_allow_html=True)
 
         # ── 데이터 준비 ──
-        # ▶ S&P500 가격 (^GSPC, 1970~): 투자시즌 판단 + 트레일링 스탑용 기준 가격
+        # ▶ S&P500 가격 (^GSPC, 1970~): 트레일링 스탑 기준 가격용 (raw 가격)
         _d_sp = raw["sp500"].copy()
         _d_sp.index = pd.to_datetime(_d_sp.index).tz_localize(None)
         _d_sp = _d_sp.dropna().sort_index()
 
-        # ▶ S&P500 Total Return 구성 (3단계)
-        #   ① ^GSPC 가격수익률 (1970~)
-        #   ② + multpl.com 배당수익률 → 1970~1987 구간 배당 반영
-        #   ③ 1988~ 구간은 ^SP500TR(배당 재투자 포함 지수)로 교체 (더 정확)
-        _d_sp_tr  = load_sp500tr()
-        _div_yield_m = load_sp500_div_yield()   # 월별 연환산 배당수익률(%)
-        _rs_gspc  = _d_sp.pct_change().dropna()
+        # ▶ S&P500 TR 수익률: 데이터 로딩 시 이미 계산된 raw["sp500_tr"] 재사용
+        #   1970~1987: ^GSPC + multpl.com 배당수익률/252
+        #   1988~현재: ^SP500TR (배당재투자 지수)
+        _sp_tr_price = raw.get("sp500_tr", raw["sp500"]).copy()
+        _sp_tr_price.index = pd.to_datetime(_sp_tr_price.index).tz_localize(None)
+        _sp_tr_price = _sp_tr_price.dropna().sort_index()
+        _rs_base = _sp_tr_price.pct_change().dropna()
 
-        # ② 배당 합산: 월별 배당수익률 → 일별 forward-fill → /100/252
-        if not _div_yield_m.empty:
-            _div_daily   = (_div_yield_m / 100 / 252).reindex(_rs_gspc.index, method="ffill").fillna(0)
-            _rs_gspc_tr  = _rs_gspc + _div_daily   # 가격변동 + 일별 배당
-            _use_div     = True
-            _div_src_lbl = "multpl.com 배당수익률 (1871~)"
-        else:
-            _rs_gspc_tr  = _rs_gspc
-            _use_div     = False
-            _div_src_lbl = "배당 미포함 (multpl.com 로드 실패)"
-
-        # ③ 1988~ ^SP500TR으로 교체
-        if not _d_sp_tr.empty:
-            _rs_tr   = _d_sp_tr.pct_change().dropna()
-            _rs_base = _rs_gspc_tr.copy()
-            _tr_idx  = _rs_tr.index.intersection(_rs_gspc_tr.index)
-            _rs_base[_tr_idx] = _rs_tr[_tr_idx]
-            _sp_tr_start = _rs_tr.index[0].strftime("%Y-%m-%d")
-            _use_sp_tr   = True
-        else:
-            _rs_base     = _rs_gspc_tr
-            _sp_tr_start = "N/A (다운로드 실패)"
-            _use_sp_tr   = False
+        # 데이터 출처 박스 표시용 변수
+        _d_sp_tr     = load_sp500tr()
+        _div_yield_m = load_sp500_div_yield()
+        _use_div     = not _div_yield_m.empty
+        _div_src_lbl = "multpl.com 배당수익률 (1871~)" if _use_div else "배당 미포함 (multpl.com 로드 실패)"
+        _use_sp_tr   = not _d_sp_tr.empty
+        _sp_tr_start = _d_sp_tr.index[0].strftime("%Y-%m-%d") if _use_sp_tr else "N/A (다운로드 실패)"
 
         # ▶ 금 (GC=F, 1970~): 가격변동 수익률만 (금은 배당/이자 없음)
         _d_gold = raw["gold"].copy()
