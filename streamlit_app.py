@@ -287,6 +287,38 @@ def load_fear_greed():
         return None
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_sp500_div_yield():
+    """S&P500 배당수익률 월별 시계열 (multpl.com, 1871~) — 연환산 %(%)"""
+    try:
+        import requests as _req
+        from bs4 import BeautifulSoup as _BS
+        url = "https://www.multpl.com/s-p-500-dividend-yield/table/by-month"
+        r = _req.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        soup = _BS(r.text, "html.parser")
+        tbl = soup.find("table", id="datatable")
+        if tbl is None:
+            return pd.Series(dtype=float)
+        data = {}
+        for row in tbl.find_all("tr")[1:]:
+            cols = row.find_all("td")
+            if len(cols) < 2:
+                continue
+            try:
+                dt  = pd.to_datetime(cols[0].text.strip())
+                val = float(cols[1].text.strip().replace("%", "").replace("†", "").strip())
+                data[dt] = val
+            except Exception:
+                continue
+        if not data:
+            return pd.Series(dtype=float)
+        s = pd.Series(data).sort_index()
+        s.index = pd.to_datetime(s.index).tz_localize(None)
+        return s
+    except Exception:
+        return pd.Series(dtype=float)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_sp500tr():
     """S&P500 Total Return Index (^SP500TR) — 배당 재투자 포함, 1988~"""
@@ -5125,19 +5157,35 @@ def main():
         _d_sp.index = pd.to_datetime(_d_sp.index).tz_localize(None)
         _d_sp = _d_sp.dropna().sort_index()
 
-        # ▶ S&P500 Total Return (^SP500TR, 1988~): 배당 재투자 포함 수익률
-        #   1988년 이전 구간은 ^GSPC 수익률(배당 미포함)로 대체
-        _d_sp_tr = load_sp500tr()
-        _rs_gspc = _d_sp.pct_change().dropna()
+        # ▶ S&P500 Total Return 구성 (3단계)
+        #   ① ^GSPC 가격수익률 (1970~)
+        #   ② + multpl.com 배당수익률 → 1970~1987 구간 배당 반영
+        #   ③ 1988~ 구간은 ^SP500TR(배당 재투자 포함 지수)로 교체 (더 정확)
+        _d_sp_tr  = load_sp500tr()
+        _div_yield_m = load_sp500_div_yield()   # 월별 연환산 배당수익률(%)
+        _rs_gspc  = _d_sp.pct_change().dropna()
+
+        # ② 배당 합산: 월별 배당수익률 → 일별 forward-fill → /100/252
+        if not _div_yield_m.empty:
+            _div_daily   = (_div_yield_m / 100 / 252).reindex(_rs_gspc.index, method="ffill").fillna(0)
+            _rs_gspc_tr  = _rs_gspc + _div_daily   # 가격변동 + 일별 배당
+            _use_div     = True
+            _div_src_lbl = "multpl.com 배당수익률 (1871~)"
+        else:
+            _rs_gspc_tr  = _rs_gspc
+            _use_div     = False
+            _div_src_lbl = "배당 미포함 (multpl.com 로드 실패)"
+
+        # ③ 1988~ ^SP500TR으로 교체
         if not _d_sp_tr.empty:
             _rs_tr   = _d_sp_tr.pct_change().dropna()
-            _rs_base = _rs_gspc.copy()
-            _tr_idx  = _rs_tr.index.intersection(_rs_gspc.index)
-            _rs_base[_tr_idx] = _rs_tr[_tr_idx]   # 1988~ 구간은 TR 수익률로 덮어씀
+            _rs_base = _rs_gspc_tr.copy()
+            _tr_idx  = _rs_tr.index.intersection(_rs_gspc_tr.index)
+            _rs_base[_tr_idx] = _rs_tr[_tr_idx]
             _sp_tr_start = _rs_tr.index[0].strftime("%Y-%m-%d")
             _use_sp_tr   = True
         else:
-            _rs_base     = _rs_gspc
+            _rs_base     = _rs_gspc_tr
             _sp_tr_start = "N/A (다운로드 실패)"
             _use_sp_tr   = False
 
@@ -5224,18 +5272,29 @@ def main():
         with _info_col:
             _c_start  = _common[0].strftime("%Y-%m-%d")
             _c_end    = _common[-1].strftime("%Y-%m-%d")
-            _tr_badge = (f'<span style="color:#00FF66;font-size:13px;">배당 포함({_sp_tr_start}~)</span>'
-                         f'<span style="color:#ffffff;font-size:13px;"> / </span>'
-                         f'<span style="color:#FF9100;font-size:13px;">배당 미포함(~{_sp_tr_start[:7]})</span>'
-                         if _use_sp_tr else
-                         f'<span style="color:#FF9100;font-size:13px;">배당 미포함(^SP500TR 로드 실패)</span>')
+            # S&P500 배당 표시 배지
+            if _use_sp_tr and _use_div:
+                _tr_badge = (
+                    f'<span style="color:#FF9100;font-size:12px;">1970~{_sp_tr_start[:7]}: ^GSPC + {_div_src_lbl}</span>'
+                    f'<span style="color:#ffffff;font-size:12px;"> / </span>'
+                    f'<span style="color:#00FF66;font-size:12px;">{_sp_tr_start[:7]}~: ^SP500TR (배당재투자)</span>'
+                )
+            elif _use_sp_tr:
+                _tr_badge = (
+                    f'<span style="color:#FF9100;font-size:12px;">1970~{_sp_tr_start[:7]}: ^GSPC 가격만</span>'
+                    f'<span style="color:#ffffff;font-size:12px;"> / </span>'
+                    f'<span style="color:#00FF66;font-size:12px;">{_sp_tr_start[:7]}~: ^SP500TR (배당재투자)</span>'
+                )
+            else:
+                _tr_badge = f'<span style="color:#FF9100;font-size:12px;">^GSPC 가격만 ({_div_src_lbl})</span>'
+
             st.markdown(
                 f'<div style="background:#0d1117;border:1px solid #1e293b;border-radius:8px;'
                 f'padding:12px 16px;margin-top:4px;line-height:2.0;">'
 
                 f'<span style="color:#00FF66;font-size:14px;font-weight:800;">S&P500</span>'
-                f'<span style="color:#ffffff;font-size:13px;"> yfinance ^GSPC (1970~, 가격지수) + ^SP500TR → </span>'
-                f'{_tr_badge}<br>'
+                f'<span style="color:#ffffff;font-size:13px;"> 총수익률(TR) = 가격변동 + 배당</span><br>'
+                f'<span style="color:#ffffff;font-size:12px;">└ </span>{_tr_badge}<br>'
 
                 f'<span style="color:#FFD700;font-size:14px;font-weight:800;">금</span>'
                 f'<span style="color:#ffffff;font-size:13px;"> yfinance GC=F (선물 연속, 1970~) · 배당·이자 없음 · 가격변동만</span><br>'
